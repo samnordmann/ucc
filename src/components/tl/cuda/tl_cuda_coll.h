@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * Copyright (c) 2021-2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * See file LICENSE for terms.
  */
@@ -10,7 +10,7 @@
 #include "tl_cuda.h"
 #include "components/mc/ucc_mc.h"
 
-#define UCC_TL_CUDA_N_DEFAULT_ALG_SELECT_STR 2
+#define UCC_TL_CUDA_N_DEFAULT_ALG_SELECT_STR 4
 extern const char
     *ucc_tl_cuda_default_alg_select_str[UCC_TL_CUDA_N_DEFAULT_ALG_SELECT_STR];
 

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2022.  ALL RIGHTS RESERVED.
+ * Copyright (c) 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * See file LICENSE for terms.
  */
@@ -13,6 +13,10 @@ ucc_status_t ucc_tl_cuda_allgather_linear_init(ucc_base_coll_args_t *coll_args,
 {
     ucc_tl_cuda_team_t *team = ucc_derived_of(tl_team, ucc_tl_cuda_team_t);
     ucc_tl_cuda_task_t *task = ucc_tl_cuda_task_init(coll_args, team);
+
+    if (ucc_unlikely(!task)) {
+        return UCC_ERR_NO_MEMORY;
+    }
 
     task->allgatherv_linear.get_count  = ucc_tl_cuda_allgather_get_count;
     task->allgatherv_linear.get_offset = ucc_tl_cuda_allgather_get_offset;
