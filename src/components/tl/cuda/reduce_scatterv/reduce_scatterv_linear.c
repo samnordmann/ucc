@@ -126,7 +126,7 @@ ucc_tl_cuda_reduce_scatterv_linear_setup_start(ucc_tl_cuda_task_t *task)
     ucc_rank_t          trank = UCC_TL_TEAM_RANK(team);
     ucc_status_t        status;
 
-    set_rank_step(task, trank, 0, 0);
+    set_rank_step(task, trank, -1, 0);
     ucc_memory_cpu_store_fence();
     status = ucc_tl_cuda_shm_barrier_start(UCC_TL_TEAM_RANK(team), task->bar);
     if (ucc_unlikely(status != UCC_OK)) {
@@ -261,27 +261,24 @@ ucc_tl_cuda_reduce_scatterv_linear_progress_frag(ucc_tl_cuda_task_t *task)
 
     step = get_rank_step(task, trank, 0);
     while (step < num_steps) {
-        if ((task->reduce_scatterv_linear.exec_task[0] != NULL) ||
-            (task->reduce_scatterv_linear.exec_task[1] != NULL)) {
-            for (i = 0; i < 2; i++) {
-                etask = task->reduce_scatterv_linear.exec_task[i];
-                if (etask != NULL) {
-                    st = ucc_ee_executor_task_test(etask);
-                    if (st == UCC_OK) {
-                        ucc_ee_executor_task_finalize(etask);
-                        task->reduce_scatterv_linear.exec_task[i] = NULL;
-                    } else {
-                        if (ucc_likely(st > 0)) {
-                            return UCC_INPROGRESS;
-                        }
-                        return st;
+        for (i = 0; i < 2; i++) {
+            etask = task->reduce_scatterv_linear.exec_task[i];
+            if (etask != NULL) {
+                st = ucc_ee_executor_task_test(etask);
+                if (st == UCC_OK) {
+                    ucc_ee_executor_task_finalize(etask);
+                    task->reduce_scatterv_linear.exec_task[i] = NULL;
+                } else {
+                    if (ucc_likely(st > 0)) {
+                        return UCC_INPROGRESS;
                     }
+                    return st;
                 }
             }
-            step++;
-            set_rank_step(task, trank, step, 0);
-            continue;
         }
+
+        step++;
+        set_rank_step(task, trank, step, 0);
 
         for (i = 0; i < tsize; i++) {
             if (get_rank_step(task, i, 0) < step) {
@@ -317,14 +314,6 @@ ucc_tl_cuda_reduce_scatterv_linear_progress_frag(ucc_tl_cuda_task_t *task)
                 remote_offset, &task->reduce_scatterv_linear.exec_task[0]);
             ucc_tl_cuda_reduce_scatterv_linear_reduce(task, exec, sbuf, rbuf,
                 step - 1, local_offset, &task->reduce_scatterv_linear.exec_task[1]);
-        }
-
-        if ((task->reduce_scatterv_linear.exec_task[0] == NULL) &&
-            (task->reduce_scatterv_linear.exec_task[1] == NULL)) {
-            /* have no work to do at current step, go to next step */
-            step++;
-            set_rank_step(task, trank, step, 0);
-            continue;
         }
     }
 
