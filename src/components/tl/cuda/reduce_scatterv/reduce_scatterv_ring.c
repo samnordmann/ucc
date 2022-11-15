@@ -334,8 +334,13 @@ ucc_tl_cuda_reduce_scatterv_ring_init(ucc_base_coll_args_t *coll_args,
                                       ucc_coll_task_t **    task_p)
 {
     ucc_tl_cuda_team_t *team = ucc_derived_of(tl_team, ucc_tl_cuda_team_t);
-    ucc_tl_cuda_task_t *task = ucc_tl_cuda_task_init(coll_args, team);
+    ucc_tl_cuda_task_t *task;
 
+    if (coll_args->args.op == UCC_OP_AVG) {
+        return UCC_ERR_NOT_SUPPORTED;
+    }
+
+    task = ucc_tl_cuda_task_init(coll_args, team);
     if (ucc_unlikely(!task)) {
         return UCC_ERR_NO_MEMORY;
     }

@@ -11,12 +11,17 @@ ucc_status_t ucc_tl_cuda_reduce_scatter_ring_init(ucc_base_coll_args_t *coll_arg
                                                   ucc_base_team_t *     tl_team,
                                                   ucc_coll_task_t **    task_p)
 {
-    ucc_tl_cuda_team_t *team   = ucc_derived_of(tl_team, ucc_tl_cuda_team_t);
-    ucc_tl_cuda_task_t *task   = ucc_tl_cuda_task_init(coll_args, team);
-    size_t              ssize  = UCC_TL_CUDA_TEAM_LIB(team)->cfg.scratch_size;
-    ucc_datatype_t      dt     = coll_args->args.dst.info.datatype;
+    ucc_tl_cuda_team_t *team  = ucc_derived_of(tl_team, ucc_tl_cuda_team_t);
+    size_t              ssize = UCC_TL_CUDA_TEAM_LIB(team)->cfg.scratch_size;
+    ucc_datatype_t      dt    = coll_args->args.dst.info.datatype;
+    ucc_tl_cuda_task_t *task;
     size_t send_size, frag_size;
 
+    if (coll_args->args.op == UCC_OP_AVG) {
+        return UCC_ERR_NOT_SUPPORTED;
+    }
+
+    task = ucc_tl_cuda_task_init(coll_args, team);
     if (ucc_unlikely(!task)) {
         return UCC_ERR_NO_MEMORY;
     }

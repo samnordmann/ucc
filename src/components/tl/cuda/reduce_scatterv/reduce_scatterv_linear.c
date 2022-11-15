@@ -43,7 +43,7 @@
  *
  *      step NS-2: reduce frag1_(NS-3), frag2_(NS-3), ..., fragN_(NS-3) from local
  *                 scratch buffer to local dst buffer
- *                 copy fragR_NS from local src buffer to remote scratch buffers
+ *                 copy fragR_(NS-2) from local src buffer to remote scratch buffers
  *                 for all ranks
  *
  *      step NS-1: reduce frag1_(NS-2), frag2_(NS-2), ..., fragN_(NS-2) from local
@@ -394,9 +394,6 @@ ucc_tl_cuda_reduce_scatterv_linear_start(ucc_coll_task_t *coll_task)
 
     task->reduce_scatterv_linear.stage = STAGE_SYNC;
     task->reduce_scatterv_linear.sbuf  = args->src.info.buffer;
-    task->reduce_scatterv_linear.rbuf  =
-            (args->coll_type == UCC_COLL_TYPE_REDUCE_SCATTERV) ?
-            args->dst.info_v.buffer : args->dst.info.buffer;
     send_size = task->reduce_scatterv_linear.get_count(task, 0);
     for (i = 1; i < tsize; i++) {
         send_size =
@@ -423,8 +420,13 @@ ucc_tl_cuda_reduce_scatterv_linear_init(ucc_base_coll_args_t *coll_args,
                                         ucc_coll_task_t **    task_p)
 {
     ucc_tl_cuda_team_t *team = ucc_derived_of(tl_team, ucc_tl_cuda_team_t);
-    ucc_tl_cuda_task_t *task = ucc_tl_cuda_task_init(coll_args, team);
+    ucc_tl_cuda_task_t *task;
 
+    if (coll_args->args.op == UCC_OP_AVG) {
+        return UCC_ERR_NOT_SUPPORTED;
+    }
+
+    task = ucc_tl_cuda_task_init(coll_args, team);
     if (ucc_unlikely(!task)) {
         return UCC_ERR_NO_MEMORY;
     }
@@ -433,6 +435,9 @@ ucc_tl_cuda_reduce_scatterv_linear_init(ucc_base_coll_args_t *coll_args,
         ucc_tl_cuda_reduce_scatterv_get_count;
     task->reduce_scatterv_linear.get_offset =
         ucc_tl_cuda_reduce_scatterv_get_offset;
+    task->reduce_scatterv_linear.dt         =
+            coll_args->args.dst.info_v.datatype;
+    task->reduce_scatterv_linear.rbuf       = coll_args->args.dst.info_v.buffer;
     task->super.flags          |= UCC_COLL_TASK_FLAG_EXECUTOR;
     task->super.post           = ucc_tl_cuda_reduce_scatterv_linear_start;
     task->super.progress       = ucc_tl_cuda_reduce_scatterv_linear_progress;
