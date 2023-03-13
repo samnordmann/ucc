@@ -1,5 +1,6 @@
 /**
- * Copyright (c) 2020, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * Copyright (c) 2020-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ *
  * See file LICENSE for terms.
  */
 
@@ -34,11 +35,6 @@ typedef struct ucc_lib_info {
     int               specific_cls_requested;
     ucc_cl_lib_attr_t *cl_attrs;
 } ucc_lib_info_t;
-
-void ucc_get_version(unsigned *major_version, unsigned *minor_version,
-                     unsigned *release_number);
-
-const char *ucc_get_version_string(void);
 
 int ucc_tl_is_required(ucc_lib_info_t *lib, ucc_tl_iface_t *tl_iface,
                        int forced);

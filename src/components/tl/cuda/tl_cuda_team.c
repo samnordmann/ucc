@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * Copyright (c) 2021-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * See file LICENSE for terms.
  */
@@ -32,18 +32,9 @@ UCC_CLASS_INIT_FUNC(ucc_tl_cuda_team_t, ucc_base_context_t *tl_context,
     self->stream      = NULL;
     self->topo        = NULL;
     self->scratch.loc = NULL;
-    if (UCC_TL_TEAM_SIZE(self) < 2) {
-        tl_trace(tl_context->lib, "team size is too small, min supported 2");
-        return UCC_ERR_NOT_SUPPORTED;
-    }
-    if (UCC_TL_TEAM_SIZE(self) > UCC_TL_CUDA_MAX_PEERS) {
-        tl_info(tl_context->lib, "team size is too large, max supported %d",
-                UCC_TL_CUDA_MAX_PEERS);
-        return UCC_ERR_NOT_SUPPORTED;
-    }
 
     if (!ucc_team_map_is_single_node(params->team, params->map)) {
-        tl_info(tl_context->lib, "multinode team is not supported");
+        tl_debug(tl_context->lib, "multinode team is not supported");
         return UCC_ERR_NOT_SUPPORTED;
     }
 
@@ -106,7 +97,6 @@ UCC_CLASS_INIT_FUNC(ucc_tl_cuda_team_t, ucc_base_context_t *tl_context,
         }
     }
 ids_exchange:
-    self->ids[UCC_TL_TEAM_SIZE(self)].device = ctx->device;
     self->ids[UCC_TL_TEAM_SIZE(self)].pci_id = ctx->device_id;
     self->ids[UCC_TL_TEAM_SIZE(self)].shm    = shm_id;
     status = self->oob.allgather(&self->ids[UCC_TL_TEAM_SIZE(self)], self->ids,
@@ -116,7 +106,7 @@ ids_exchange:
         tl_error(tl_context->lib, "failed to start oob allgather");
         goto free_devices;
     }
-    tl_info(tl_context->lib, "posted tl team: %p", self);
+    tl_debug(tl_context->lib, "posted tl team: %p", self);
 
     self->seq_num = 1;
     return UCC_OK;
@@ -141,7 +131,7 @@ UCC_CLASS_CLEANUP_FUNC(ucc_tl_cuda_team_t)
     cudaError_t st;
     int i, j;
 
-    tl_info(self->super.super.context->lib, "finalizing tl team: %p", self);
+    tl_debug(self->super.super.context->lib, "finalizing tl team: %p", self);
     if (self->topo) {
         ucc_tl_cuda_team_topo_destroy(self->topo);
     }
@@ -185,7 +175,7 @@ UCC_CLASS_CLEANUP_FUNC(ucc_tl_cuda_team_t)
         if (self->scratch.rem[i]) {
             ucc_tl_cuda_unmap_memhandle((uintptr_t)self->scratch.rem_info[i].ptr,
                                         self->scratch.rem[i],
-                                        ucc_tl_cuda_get_cache(self, i));
+                                        ucc_tl_cuda_get_cache(self, i), 1);
         }
     }
 
@@ -321,7 +311,7 @@ barrier:
         }
     }
     team->oob_req = NULL;
-    tl_info(tl_team->context->lib, "initialized tl team: %p", team);
+    tl_debug(tl_team->context->lib, "initialized tl team: %p", team);
     return UCC_OK;
 
 exit_err:
@@ -351,7 +341,7 @@ ucc_status_t ucc_tl_cuda_team_get_scores(ucc_base_team_t *tl_team,
         status = ucc_coll_score_update_from_str(
             ucc_tl_cuda_default_alg_select_str[i], score,
             UCC_TL_TEAM_SIZE(team), ucc_tl_cuda_coll_init, &team->super.super,
-            UCC_TL_CUDA_DEFAULT_SCORE, ucc_tl_cuda_alg_id_to_init);
+            UCC_TL_CUDA_DEFAULT_SCORE, ucc_tl_cuda_alg_id_to_init, &mt, 1);
         if (UCC_OK != status) {
             tl_error(tl_team->context->lib,
                      "failed to apply default coll select setting: %s",
@@ -364,7 +354,7 @@ ucc_status_t ucc_tl_cuda_team_get_scores(ucc_base_team_t *tl_team,
         status = ucc_coll_score_update_from_str(
             ctx->score_str, score, UCC_TL_TEAM_SIZE(team),
             ucc_tl_cuda_coll_init, &team->super.super,
-            UCC_TL_CUDA_DEFAULT_SCORE, ucc_tl_cuda_alg_id_to_init);
+            UCC_TL_CUDA_DEFAULT_SCORE, ucc_tl_cuda_alg_id_to_init, &mt, 1);
         if ((status < 0) && (status != UCC_ERR_INVALID_PARAM) &&
             (status != UCC_ERR_NOT_SUPPORTED)) {
             goto err;

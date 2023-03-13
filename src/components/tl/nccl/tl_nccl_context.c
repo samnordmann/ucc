@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * Copyright (c) 2021-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * Copyright (c) Facebook, Inc. and its affiliates. 2021.
  *
  * See file LICENSE for terms.
@@ -38,10 +38,17 @@ void ucc_tl_nccl_driver_collective_progress(ucc_coll_task_t *coll_task)
 #endif
 }
 
+static void ucc_tl_nccl_req_mpool_obj_cleanup(ucc_mpool_t *mp, void *obj)
+{
+    ucc_coll_task_destruct(obj);
+}
+
 static void ucc_tl_nccl_req_mpool_obj_init(ucc_mpool_t *mp, void *obj,
                                            void *chunk)
 {
     ucc_tl_nccl_task_t *req = (ucc_tl_nccl_task_t*) obj;
+
+    ucc_coll_task_construct(&req->super);
     req->super.progress = ucc_tl_nccl_event_collective_progress;
 }
 
@@ -50,7 +57,7 @@ static ucc_mpool_ops_t ucc_tl_nccl_req_mpool_ops = {
     .chunk_alloc   = ucc_mpool_hugetlb_malloc,
     .chunk_release = ucc_mpool_hugetlb_free,
     .obj_init      = ucc_tl_nccl_req_mpool_obj_init,
-    .obj_cleanup   = NULL
+    .obj_cleanup   = ucc_tl_nccl_req_mpool_obj_cleanup
 };
 
 static ucc_status_t ucc_tl_nccl_req_mapped_mpool_chunk_malloc(ucc_mpool_t *mp,
@@ -83,6 +90,7 @@ static void ucc_tl_nccl_req_mapped_mpool_obj_init(ucc_mpool_t *mp, void *obj,
     if (st != cudaSuccess) {
         req->super.status = UCC_ERR_NO_MESSAGE;
     }
+    ucc_coll_task_construct(&req->super);
     req->super.progress = ucc_tl_nccl_driver_collective_progress;
 }
 
@@ -90,7 +98,7 @@ static ucc_mpool_ops_t ucc_tl_nccl_req_mapped_mpool_ops = {
     .chunk_alloc   = ucc_tl_nccl_req_mapped_mpool_chunk_malloc,
     .chunk_release = ucc_tl_nccl_req_mapped_mpool_chunk_free,
     .obj_init      = ucc_tl_nccl_req_mapped_mpool_obj_init,
-    .obj_cleanup   = NULL
+    .obj_cleanup   = ucc_tl_nccl_req_mpool_obj_cleanup
 };
 
 UCC_CLASS_INIT_FUNC(ucc_tl_nccl_context_t,
@@ -101,27 +109,31 @@ UCC_CLASS_INIT_FUNC(ucc_tl_nccl_context_t,
         ucc_derived_of(config, ucc_tl_nccl_context_config_t);
     int mem_ops_attr = 0;
     ucc_status_t status;
-    CUresult cu_st;
-    CUdevice cu_dev;
 
     UCC_CLASS_CALL_SUPER_INIT(ucc_tl_context_t, &tl_nccl_config->super,
                               params->context);
     memcpy(&self->cfg, tl_nccl_config, sizeof(*tl_nccl_config));
     if (self->cfg.sync_type != UCC_TL_NCCL_COMPLETION_SYNC_TYPE_EVENT) {
+#if CUDA_VERSION < 12000
+        CUresult cu_st;
+        CUdevice cu_dev;
         cu_st = cuCtxGetDevice(&cu_dev);
         if (cu_st == CUDA_SUCCESS) {
             cu_st = cuDeviceGetAttribute(&mem_ops_attr,
                                         CU_DEVICE_ATTRIBUTE_CAN_USE_STREAM_MEM_OPS,
                                         cu_dev);
         } else {
-            tl_info(self->super.super.lib, "failed to get cuda device");
+            tl_debug(self->super.super.lib, "failed to get cuda device");
         }
+#else
+        mem_ops_attr = 1;
+#endif
         if (mem_ops_attr == 0) {
             if (self->cfg.sync_type == UCC_TL_NCCL_COMPLETION_SYNC_TYPE_MEMOPS) {
                 tl_error(self->super.super.lib, "memops not supported");
                 return UCC_ERR_NOT_SUPPORTED;
             }
-            tl_info(self->super.super.lib, "fallback to event completion sync");
+            tl_debug(self->super.super.lib, "fallback to event completion sync");
             self->cfg.sync_type = UCC_TL_NCCL_COMPLETION_SYNC_TYPE_EVENT;
         } else {
             self->cfg.sync_type = UCC_TL_NCCL_COMPLETION_SYNC_TYPE_MEMOPS;
@@ -130,13 +142,13 @@ UCC_CLASS_INIT_FUNC(ucc_tl_nccl_context_t,
     ucc_assert(self->cfg.sync_type == UCC_TL_NCCL_COMPLETION_SYNC_TYPE_MEMOPS ||
                self->cfg.sync_type == UCC_TL_NCCL_COMPLETION_SYNC_TYPE_EVENT);
     if (self->cfg.sync_type == UCC_TL_NCCL_COMPLETION_SYNC_TYPE_MEMOPS) {
-        tl_info(self->super.super.lib, "using memops completion sync");
+        tl_debug(self->super.super.lib, "using memops completion sync");
         status = ucc_mpool_init(&self->req_mp, 0, sizeof(ucc_tl_nccl_task_t), 0,
                                 UCC_CACHE_LINE_SIZE, 8, UINT_MAX,
                                 &ucc_tl_nccl_req_mapped_mpool_ops,
                                 params->thread_mode, "tl_nccl_req_mp");
     } else {
-        tl_info(self->super.super.lib, "using event completion sync");
+        tl_debug(self->super.super.lib, "using event completion sync");
         status = ucc_mpool_init(&self->req_mp, 0, sizeof(ucc_tl_nccl_task_t), 0,
                                 UCC_CACHE_LINE_SIZE, 8, UINT_MAX,
                                 &ucc_tl_nccl_req_mpool_ops, params->thread_mode,
@@ -153,13 +165,13 @@ UCC_CLASS_INIT_FUNC(ucc_tl_nccl_context_t,
     if (cuda_st != cudaSuccess) {
         return UCC_ERR_NO_MEMORY;
     }
-    tl_info(self->super.super.lib, "initialized tl context: %p", self);
+    tl_debug(self->super.super.lib, "initialized tl context: %p", self);
     return UCC_OK;
 }
 
 UCC_CLASS_CLEANUP_FUNC(ucc_tl_nccl_context_t)
 {
-    tl_info(self->super.super.lib, "finalizing tl context: %p", self);
+    tl_debug(self->super.super.lib, "finalizing tl context: %p", self);
     ucc_mpool_cleanup(&self->req_mp, 1);
     cudaFree(self->scratch_buf);
     self->scratch_buf = NULL;

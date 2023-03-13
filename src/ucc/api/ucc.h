@@ -1,7 +1,7 @@
 /**
  * @file ucc.h
  * @date 2020
- * @copyright (c) 2020-2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * @copyright (c) 2020-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * @copyright Copyright (C) Huawei Technologies Co., Ltd. 2020.  ALL RIGHTS RESERVED.
  * @copyright Copyright (C) UChicago Argonne, LLC. 2022.  ALL RIGHTS RESERVED.
  *
@@ -94,7 +94,7 @@ BEGIN_C_DECLS
   */
 
 /**
-  * @defgroup UCC_EVENT_DT Events and Triggered operations' datastructures
+  * @defgroup UCC_EVENT_DT Events and Triggered operations' data-structures
   * @{
   *  Data-structures associated with event-driven collective execution
   * @}
@@ -703,6 +703,37 @@ void ucc_lib_config_print(const ucc_lib_config_h config, FILE *stream,
 
 ucc_status_t ucc_lib_config_modify(ucc_lib_config_h config, const char *name,
                                    const char *value);
+
+/**
+ * @ingroup UCC_LIB
+ * @brief Get UCC library version.
+ *
+ * This routine returns the UCC library version.
+ *
+ * @param [out] major_version       Filled with library major version.
+ * @param [out] minor_version       Filled with library minor version.
+ * @param [out] release_number      Filled with library release number.
+ */
+void ucc_get_version(unsigned *major_version, unsigned *minor_version,
+                     unsigned *release_number);
+
+/**
+ * @ingroup UCC_LIB
+ * @brief Get UCC library version as a string.
+ *
+ * This routine returns the UCC library version as a string which consists of:
+ * "major.minor.release".
+ */
+const char *ucc_get_version_string(void);
+
+/**
+ * @ingroup UCC_LIB
+ * @brief Get UCC library version as a string.
+ *
+ * This routine returns the UCC library version as a string which consists of:
+ * "major.minor.release".
+ */
+const char *ucc_get_version_string(void);
 
 
 /**
@@ -1501,7 +1532,8 @@ typedef struct ucc_team_attr {
  *  @b Description
  *
  *  @ref ucc_team_create_post is a nonblocking collective operation to create
- *  the team handle. It takes in parameters ucc_context_h and ucc_team_params_t.
+ *  the team handle. Overlapping of multiple ucc\_team\_create\_post operations
+ *  are invalid. The post takes in parameters ucc_context_h and ucc_team_params_t.
  *  The ucc_team_params_t provides user configuration to customize the team and,
  *  ucc_context_h provides the resources for the team and collectives.
  *  The routine returns immediately after posting the operation with the
@@ -1957,7 +1989,8 @@ typedef enum ucc_event_type {
  *
  */
 typedef enum ucc_ee_type {
-    UCC_EE_CUDA_STREAM = 0,
+    UCC_EE_FIRST = 0,
+    UCC_EE_CUDA_STREAM = UCC_EE_FIRST,
     UCC_EE_CPU_THREAD,
     UCC_EE_ROCM_STREAM,
     UCC_EE_LAST,

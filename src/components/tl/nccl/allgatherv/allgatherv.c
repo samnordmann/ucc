@@ -37,38 +37,40 @@ ucc_base_coll_alg_info_t
         }                                                                      \
     } while(0)
 
-#define CHECK_USERDEFINED_DT(_args, _team)                                     \
-    do {                                                                       \
-        if (!UCC_DT_IS_PREDEFINED((_args).src.info.datatype) ||                \
-            !UCC_DT_IS_PREDEFINED((_args).dst.info_v.datatype)) {              \
-            tl_error(UCC_TL_TEAM_LIB((_team)),                                 \
-                     "user defined datatype is not supported");                \
-            status = UCC_ERR_NOT_SUPPORTED;                                    \
-            goto out;                                                          \
-        }                                                                      \
-    } while(0)
-
 ucc_status_t ucc_tl_nccl_allgatherv_p2p_start(ucc_coll_task_t *coll_task)
 {
     ucc_tl_nccl_task_t *task   = ucc_derived_of(coll_task, ucc_tl_nccl_task_t);
     ucc_coll_args_t    *args   = &TASK_ARGS(task);
     ucc_tl_nccl_team_t *team   = TASK_TEAM(task);
     ucc_rank_t          size   = UCC_TL_TEAM_SIZE(team);
+    ucc_rank_t          trank  = UCC_TL_TEAM_RANK(team);
     ucc_ee_h            ee     = coll_task->ee;
     cudaStream_t        stream = (ee) ? (cudaStream_t) ee->ee_context :
                                                        team->stream;
     ucc_status_t        status = UCC_OK;
-    void               *sbuf   = args->src.info.buffer;
     void               *rbuf   = args->dst.info_v.buffer;
+    void *sbuf;
     size_t sdt_size, rdt_size, count, displ;
     ucc_rank_t peer;
 
+    rdt_size = ucc_dt_size(args->dst.info_v.datatype);
+    if (UCC_IS_INPLACE(*args)) {
+        displ = ucc_coll_args_get_displacement(args,
+                                               args->dst.info_v.displacements,
+                                               trank);
+
+        sbuf = PTR_OFFSET(rbuf, displ * rdt_size);
+        sdt_size = rdt_size;
+        count = ucc_coll_args_get_count(args, args->dst.info_v.counts, trank);
+    } else {
+        sbuf = args->src.info.buffer;
+        sdt_size = ucc_dt_size(args->src.info.datatype);
+        count = args->src.info.count;
+    }
+
     task->super.status = UCC_INPROGRESS;
-    sdt_size           = ucc_dt_size(args->src.info.datatype);
-    rdt_size           = ucc_dt_size(args->dst.info_v.datatype);
     UCC_TL_NCCL_PROFILE_REQUEST_EVENT(coll_task, "nccl_allgatherv_start", 0);
     NCCLCHECK_GOTO(ncclGroupStart(), exit_coll, status, UCC_TL_TEAM_LIB(team));
-    count = args->src.info.count;
     if (count != 0) {
         for (peer = 0; peer < size; peer++) {
             NCCLCHECK_GOTO(ncclSend(sbuf, count * sdt_size, ncclChar, peer,
@@ -97,20 +99,16 @@ ucc_status_t ucc_tl_nccl_allgatherv_p2p_init(ucc_base_coll_args_t *coll_args,
                                              ucc_base_team_t *     team,
                                              ucc_coll_task_t **    task_h)
 {
-    ucc_tl_nccl_team_t *nccl_team = ucc_derived_of(team, ucc_tl_nccl_team_t);
-    ucc_coll_args_t    *args      = &coll_args->args;
-    ucc_status_t        status    = UCC_OK;
+    ucc_status_t        status = UCC_OK;
     ucc_tl_nccl_task_t *task;
 
-    CHECK_INPLACE(*args, nccl_team);
-    CHECK_USERDEFINED_DT(*args, nccl_team);
-    task = ucc_tl_nccl_init_task(coll_args, team);
-    if (!task) {
-        return UCC_ERR_NO_MESSAGE;
+    status = ucc_tl_nccl_init_task(coll_args, team, &task);
+    if (ucc_unlikely(status != UCC_OK)) {
+        return status;
     }
     task->super.post     = ucc_tl_nccl_allgatherv_p2p_start;
     *task_h = &task->super;
-out:
+
     return status;
 }
 
@@ -177,18 +175,20 @@ ucc_status_t ucc_tl_nccl_allgatherv_bcopy_init(ucc_base_coll_args_t *coll_args,
                                                ucc_base_team_t *     team,
                                                ucc_coll_task_t **    task_h)
 {
-    ucc_tl_nccl_team_t *nccl_team = ucc_derived_of(team, ucc_tl_nccl_team_t);
     ucc_coll_args_t    *args      = &coll_args->args;
     ucc_status_t        status    = UCC_OK;
     ucc_tl_nccl_task_t *task;
     size_t              max_count, sdt_size, rdt_size;
     ucc_rank_t          peer;
 
-    CHECK_INPLACE(*args, nccl_team);
-    CHECK_USERDEFINED_DT(*args, nccl_team);
-    task = ucc_tl_nccl_init_task(coll_args, team);
-    if (ucc_unlikely(!task)) {
-        return UCC_ERR_NO_MESSAGE;
+    if (UCC_IS_INPLACE(*args)) {
+        tl_debug(team->context->lib,
+                 "fallback to bcast based inplace allgatherv");
+        return ucc_tl_nccl_allgatherv_bcast_init(coll_args, team, task_h);
+    }
+    status = ucc_tl_nccl_init_task(coll_args, team, &task);
+    if (ucc_unlikely(status != UCC_OK)) {
+        return status;
     }
 
     sdt_size = ucc_dt_size(args->src.info.datatype);
@@ -218,7 +218,6 @@ ucc_status_t ucc_tl_nccl_allgatherv_bcopy_init(ucc_base_coll_args_t *coll_args,
     task->super.post     = ucc_tl_nccl_allgatherv_bcopy_start;
     task->super.finalize = ucc_tl_nccl_allgatherv_bcopy_finalize;
     *task_h = &task->super;
-out:
     return status;
 }
 
@@ -246,6 +245,9 @@ ucc_status_t ucc_tl_nccl_allgatherv_bcast_start(ucc_coll_task_t *coll_task)
         displ = ucc_coll_args_get_displacement(args,
                                                args->dst.info_v.displacements,
                                                peer);
+        if (UCC_IS_INPLACE(*args)) {
+            sbuf = PTR_OFFSET(rbuf, displ * rdt_size);
+        }
         NCCLCHECK_GOTO(ncclBroadcast(sbuf, PTR_OFFSET(rbuf, displ * rdt_size),
                                      count * rdt_size, ncclChar, peer,
                                      team->nccl_comm, stream),
@@ -261,19 +263,15 @@ ucc_status_t ucc_tl_nccl_allgatherv_bcast_init(ucc_base_coll_args_t *coll_args,
                                                ucc_base_team_t *     team,
                                                ucc_coll_task_t **    task_h)
 {
-    ucc_tl_nccl_team_t *nccl_team = ucc_derived_of(team, ucc_tl_nccl_team_t);
-    ucc_coll_args_t    *args      = &coll_args->args;
     ucc_status_t        status    = UCC_OK;
     ucc_tl_nccl_task_t *task;
 
-    CHECK_INPLACE(*args, nccl_team);
-    CHECK_USERDEFINED_DT(*args, nccl_team);
-    task = ucc_tl_nccl_init_task(coll_args, team);
-    if (!task) {
-        return UCC_ERR_NO_MESSAGE;
+    status = ucc_tl_nccl_init_task(coll_args, team, &task);
+    if (ucc_unlikely(status != UCC_OK)) {
+        return status;
     }
+
     task->super.post = ucc_tl_nccl_allgatherv_bcast_start;
     *task_h = &task->super;
-out:
     return status;
 }

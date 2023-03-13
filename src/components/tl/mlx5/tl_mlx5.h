@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2022.  ALL RIGHTS RESERVED.
+ * Copyright (c) 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * See file LICENSE for terms.
  */
@@ -39,7 +39,15 @@ typedef struct ucc_tl_mlx5_iface {
 /* Extern iface should follow the pattern: ucc_tl_<tl_name> */
 extern ucc_tl_mlx5_iface_t ucc_tl_mlx5;
 
-typedef struct ucc_tl_mlx5_lib_config {
+typedef struct ucc_tl_mlx5_ib_qp_conf {
+    uint32_t            qp_rnr_retry;
+    uint32_t            qp_rnr_timer;
+    uint32_t            qp_retry_cnt;
+    uint32_t            qp_timeout;
+    uint32_t            qp_max_atomic;
+} ucc_tl_mlx5_ib_qp_conf_t;
+
+typedef struct ucc_tl_mlx5_lib_config {    
     ucc_tl_lib_config_t super;
     int                 asr_barrier;
     int                 block_size;
@@ -48,7 +56,9 @@ typedef struct ucc_tl_mlx5_lib_config {
     size_t              dm_buf_size;
     size_t              dm_buf_num;
     int                 dm_host;
+    ucc_tl_mlx5_ib_qp_conf_t qp_conf;
 } ucc_tl_mlx5_lib_config_t;
+
 
 typedef struct ucc_tl_mlx5_context_config {
     ucc_tl_context_config_t  super;

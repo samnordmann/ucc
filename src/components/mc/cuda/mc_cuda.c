@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * Copyright (c) 2020-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * See file LICENSE for terms.
  */
@@ -58,7 +58,7 @@ static ucc_status_t ucc_mc_cuda_init(const ucc_mc_params_t *mc_params)
     ucc_mc_cuda.thread_mode = mc_params->thread_mode;
     cuda_st = cudaGetDeviceCount(&num_devices);
     if ((cuda_st != cudaSuccess) || (num_devices == 0)) {
-        mc_info(&ucc_mc_cuda.super, "cuda devices are not found");
+        mc_debug(&ucc_mc_cuda.super, "cuda devices are not found");
         return UCC_ERR_NO_RESOURCE;
     }
     CUDADRV_FUNC(cuDriverGetVersion(&driver_ver));
@@ -193,12 +193,12 @@ static void ucc_mc_cuda_chunk_init(ucc_mpool_t *mp, //NOLINT
     h->mt        = UCC_MEMORY_TYPE_CUDA;
 }
 
-static void ucc_mc_cuda_chunk_release(ucc_mpool_t *mp, void *chunk) //NOLINT
+static void ucc_mc_cuda_chunk_release(ucc_mpool_t *mp, void *chunk) //NOLINT: mp is unused
 {
     ucc_free(chunk);
 }
 
-static void ucc_mc_cuda_chunk_cleanup(ucc_mpool_t *mp, void *obj)
+static void ucc_mc_cuda_chunk_cleanup(ucc_mpool_t *mp, void *obj) //NOLINT: mp is unused
 {
     ucc_mc_buffer_header_t *h = (ucc_mc_buffer_header_t *)obj;
     cudaError_t             st;

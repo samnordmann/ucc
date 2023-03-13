@@ -5,7 +5,6 @@
  */
 
 #include "ec_cuda_executor.h"
-#include "components/mc/ucc_mc.h"
 #include "utils/ucc_atomic.h"
 
 ucc_status_t ucc_cuda_executor_interruptible_get_stream(cudaStream_t *stream)
@@ -16,6 +15,7 @@ ucc_status_t ucc_cuda_executor_interruptible_get_stream(cudaStream_t *stream)
     int             i, j;
     uint32_t        id;
 
+    ucc_assert(num_streams > 0);
     if (ucc_unlikely(!ucc_ec_cuda.exec_streams_initialized)) {
         ucc_spin_lock(&ucc_ec_cuda.init_spinlock);
         if (ucc_ec_cuda.exec_streams_initialized) {
@@ -93,6 +93,7 @@ ucc_cuda_executor_interruptible_task_post(ucc_ee_executor_t *executor,
         break;
     case UCC_EE_EXECUTOR_TASK_REDUCE:
     case UCC_EE_EXECUTOR_TASK_REDUCE_STRIDED:
+    case UCC_EE_EXECUTOR_TASK_REDUCE_MULTI_DST:
         status = ucc_ec_cuda_reduce((ucc_ee_executor_task_args_t *)task_args,
                                     stream);
         if (ucc_unlikely(status != UCC_OK)) {
@@ -138,6 +139,7 @@ ucc_cuda_executor_interruptible_task_finalize(ucc_ee_executor_task_t *task)
         ucc_derived_of(task, ucc_ec_cuda_executor_interruptible_task_t);
     ucc_status_t status;
 
+    ucc_assert(task->status == UCC_OK);
     status = ucc_ec_cuda_event_destroy(ee_task->event);
     ucc_mpool_put(task);
     return status;

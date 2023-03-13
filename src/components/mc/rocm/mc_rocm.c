@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * Copyright (c) 2020-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * Copyright (C) Advanced Micro Devices, Inc. 2022. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
@@ -40,7 +40,7 @@ static ucc_status_t ucc_mc_rocm_init(const ucc_mc_params_t *mc_params)
     ucc_mc_rocm.thread_mode = mc_params->thread_mode;
     rocm_st = hipGetDeviceCount(&num_devices);
     if ((rocm_st != hipSuccess) || (num_devices == 0)) {
-        mc_info(&ucc_mc_rocm.super, "rocm devices are not found");
+        mc_debug(&ucc_mc_rocm.super, "rocm devices are not found");
         return hip_error_to_ucc_status(rocm_st);
     }
 
@@ -106,7 +106,7 @@ static ucc_status_t ucc_mc_rocm_mem_pool_alloc(ucc_mc_buffer_header_t **h_ptr,
     return UCC_OK;
 }
 
-static ucc_status_t ucc_mc_rocm_chunk_alloc(ucc_mpool_t *mp,
+static ucc_status_t ucc_mc_rocm_chunk_alloc(ucc_mpool_t *mp, //NOLINT
                                             size_t *size_p,
                                             void **chunk_p)
 {
@@ -119,8 +119,8 @@ static ucc_status_t ucc_mc_rocm_chunk_alloc(ucc_mpool_t *mp,
     return UCC_OK;
 }
 
-static void ucc_mc_rocm_chunk_init(ucc_mpool_t *mp,
-                                   void *obj, void *chunk)
+static void ucc_mc_rocm_chunk_init(ucc_mpool_t *mp, //NOLINT
+                                   void *obj, void *chunk) //NOLINT
 {
     ucc_mc_buffer_header_t *h = (ucc_mc_buffer_header_t *)obj;
     hipError_t st             = hipMalloc(&h->addr, MC_ROCM_CONFIG->mpool_elem_size);
@@ -138,12 +138,12 @@ static void ucc_mc_rocm_chunk_init(ucc_mpool_t *mp,
     h->mt        = UCC_MEMORY_TYPE_ROCM;
 }
 
-static void ucc_mc_rocm_chunk_release(ucc_mpool_t *mp, void *chunk)
+static void ucc_mc_rocm_chunk_release(ucc_mpool_t *mp, void *chunk) //NOLINT: mp is unused
 {
     ucc_free(chunk);
 }
 
-static void ucc_mc_rocm_chunk_cleanup(ucc_mpool_t *mp, void *obj)
+static void ucc_mc_rocm_chunk_cleanup(ucc_mpool_t *mp, void *obj) //NOLINT: mp is unused
 {
     ucc_mc_buffer_header_t *h = (ucc_mc_buffer_header_t *)obj;
     hipError_t st;

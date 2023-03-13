@@ -90,67 +90,62 @@ static ucc_status_t ucc_tl_ucp_allreduce_sra_knomial_frag_init(
     ucc_base_team_t *team, ucc_schedule_t **frag_p)
 {
     ucc_tl_ucp_team_t   *tl_team  = ucc_derived_of(team, ucc_tl_ucp_team_t);
-    size_t               count    = coll_args->args.dst.info.count;
+    ucc_datatype_t       dtype    = coll_args->args.dst.info.datatype;
+    ucc_memory_type_t    mem_type = coll_args->args.dst.info.mem_type;
     ucc_base_coll_args_t args     = *coll_args;
+    ucc_mrange_uint_t   *p        = &tl_team->cfg.allreduce_sra_kn_radix;
     ucc_schedule_t      *schedule;
     ucc_coll_task_t     *task, *rs_task;
     ucc_status_t         status;
     ucc_kn_radix_t       radix, cfg_radix;
+    size_t               count;
 
     status = ucc_tl_ucp_get_schedule(tl_team, coll_args,
                                      (ucc_tl_ucp_schedule_t **)&schedule);
     if (ucc_unlikely(UCC_OK != status)) {
         return status;
     }
-    cfg_radix = UCC_TL_UCP_TEAM_LIB(tl_team)->cfg.allreduce_sra_kn_radix;
-    radix = ucc_knomial_pattern_get_min_radix(cfg_radix,
-                                              UCC_TL_TEAM_SIZE(tl_team), count);
+
+    if (coll_args->mask & UCC_BASE_CARGS_MAX_FRAG_COUNT) {
+        count = coll_args->max_frag_count;
+    } else {
+        count = coll_args->args.dst.info.count;
+    }
+
+    cfg_radix = ucc_tl_ucp_get_radix_from_range(tl_team,
+                                                count * ucc_dt_size(dtype),
+                                                mem_type, p);
+    radix     = ucc_knomial_pattern_get_min_radix(cfg_radix,
+                                                  UCC_TL_TEAM_SIZE(tl_team),
+                                                  count);
 
     /* 1st step of allreduce: knomial reduce_scatter */
-    status = ucc_tl_ucp_reduce_scatter_knomial_init_r(&args, team, &task, radix);
-    if (UCC_OK != status) {
-        tl_error(UCC_TL_TEAM_LIB(tl_team),
-                 "failed to init reduce_scatter_knomial task");
-        goto out;
-    }
-    ucc_schedule_add_task(schedule, task);
-    ucc_task_subscribe_dep(&schedule->super, task, UCC_EVENT_SCHEDULE_STARTED);
+    UCC_CHECK_GOTO(
+        ucc_tl_ucp_reduce_scatter_knomial_init_r(&args, team, &task, radix),
+        out, status);
+
+    UCC_CHECK_GOTO(ucc_schedule_add_task(schedule, task), out, status);
+    UCC_CHECK_GOTO(ucc_task_subscribe_dep(&schedule->super, task,
+                                          UCC_EVENT_SCHEDULE_STARTED),
+                   out, status);
     rs_task = task;
+
     /* 2nd step of allreduce: knomial allgather. 2nd task subscribes
      to completion event of reduce_scatter task. */
     args.args.mask  |= UCC_COLL_ARGS_FIELD_FLAGS;
     args.args.flags |= UCC_COLL_ARGS_FLAG_IN_PLACE;
-    status = ucc_tl_ucp_allgather_knomial_init_r(&args, team, &task, radix);
-    if (UCC_OK != status) {
-        tl_error(UCC_TL_TEAM_LIB(tl_team),
-                 "failed to init allgather_knomial task");
-        goto out;
-    }
-    ucc_schedule_add_task(schedule, task);
-    ucc_task_subscribe_dep(rs_task, task, UCC_EVENT_COMPLETED);
+    UCC_CHECK_GOTO(
+        ucc_tl_ucp_allgather_knomial_init_r(&args, team, &task, radix), out,
+        status);
+    UCC_CHECK_GOTO(ucc_schedule_add_task(schedule, task), out, status);
+    UCC_CHECK_GOTO(ucc_task_subscribe_dep(rs_task, task, UCC_EVENT_COMPLETED),
+                   out, status);
     schedule->super.finalize = ucc_tl_ucp_allreduce_sra_knomial_frag_finalize;
     schedule->super.post     = ucc_tl_ucp_allreduce_sra_knomial_frag_start;
     *frag_p                  = schedule;
     return UCC_OK;
 out:
     return status;
-}
-
-static inline void get_sra_n_frags(size_t msgsize,
-                                   ucc_tl_ucp_team_t *team, int *n_frags,
-                                   int *pipeline_depth)
-{
-    //TODO make selection mem_type - specific
-    ucc_tl_ucp_lib_config_t *cfg     = &UCC_TL_UCP_TEAM_LIB(team)->cfg;
-    int min_num_frags;
-
-    *n_frags = 1;
-    if (msgsize > cfg->allreduce_sra_kn_frag_thresh) {
-        min_num_frags = ucc_div_round_up(msgsize,
-                                             cfg->allreduce_sra_kn_frag_size);
-        *n_frags = ucc_max(min_num_frags, cfg->allreduce_sra_kn_n_frags);
-    }
-    *pipeline_depth = ucc_min(*n_frags, cfg->allreduce_sra_kn_pipeline_depth);
 }
 
 static ucc_status_t
@@ -177,7 +172,7 @@ ucc_tl_ucp_allreduce_sra_knomial_init(ucc_base_coll_args_t *coll_args,
                                       ucc_coll_task_t     **task_h)
 {
     ucc_tl_ucp_team_t        *tl_team = ucc_derived_of(team, ucc_tl_ucp_team_t);
-    ucc_tl_ucp_lib_config_t  *cfg     = &UCC_TL_UCP_TEAM_LIB(tl_team)->cfg;
+    ucc_tl_ucp_lib_config_t  *cfg     = &tl_team->cfg;
     int                       n_frags, pipeline_depth;
     ucc_schedule_pipelined_t *schedule_p;
     ucc_status_t         status;
@@ -198,8 +193,9 @@ ucc_tl_ucp_allreduce_sra_knomial_init(ucc_base_coll_args_t *coll_args,
         max_frag_count = coll_args->args.dst.info.count;
     }
 
-    get_sra_n_frags(max_frag_count * dt_size, tl_team, &n_frags,
-                    &pipeline_depth);
+    ucc_pipeline_nfrags_pdepth(&cfg->allreduce_sra_kn_pipeline,
+                               max_frag_count * dt_size, &n_frags,
+                               &pipeline_depth);
 
     if (n_frags > 1) {
         bargs.mask         |= UCC_BASE_CARGS_MAX_FRAG_COUNT;
@@ -210,7 +206,7 @@ ucc_tl_ucp_allreduce_sra_knomial_init(ucc_base_coll_args_t *coll_args,
     status = ucc_schedule_pipelined_init(
         &bargs, team, ucc_tl_ucp_allreduce_sra_knomial_frag_init,
         ucc_tl_ucp_allreduce_sra_knomial_frag_setup, pipeline_depth, n_frags,
-        cfg->allreduce_sra_kn_seq, schedule_p);
+        cfg->allreduce_sra_kn_pipeline.order, schedule_p);
     if (UCC_OK != status) {
         tl_error(team->context->lib, "failed to init pipelined schedule");
         ucc_tl_ucp_put_schedule(&schedule_p->super);

@@ -12,6 +12,7 @@
 #include "components/tl/ucc_tl.h"
 #include "coll_score/ucc_coll_score.h"
 #include "utils/ucc_mpool.h"
+#include "schedule/ucc_schedule_pipelined.h"
 
 #ifdef HAVE_PROFILING_CL_HIER
 #include "utils/profile/ucc_profile_on.h"
@@ -49,12 +50,9 @@ typedef struct ucc_cl_hier_lib_config {
        which are selected based on the TL scores */
     ucc_config_names_list_t sbgp_tls[UCC_HIER_SBGP_LAST];
     size_t                  a2av_node_thresh;
-    uint32_t                allreduce_split_rail_n_frags;
-    uint32_t                allreduce_split_rail_pipeline_depth;
-    int                     allreduce_split_rail_seq;
-    size_t                  allreduce_split_rail_frag_thresh;
-    size_t                  allreduce_split_rail_frag_size;
-
+    ucc_pipeline_params_t   allreduce_split_rail_pipeline;
+    ucc_pipeline_params_t   allreduce_rab_pipeline;
+    ucc_pipeline_params_t   bcast_2step_pipeline;
 } ucc_cl_hier_lib_config_t;
 
 typedef struct ucc_cl_hier_context_config {
@@ -71,10 +69,8 @@ UCC_CLASS_DECLARE(ucc_cl_hier_lib_t, const ucc_base_lib_params_t *,
                   const ucc_base_config_t *);
 
 typedef struct ucc_cl_hier_context {
-    ucc_cl_context_t   super;
-    ucc_tl_context_t **tl_ctxs;
-    unsigned           n_tl_ctxs;
-    ucc_mpool_t        sched_mp;
+    ucc_cl_context_t super;
+    ucc_mpool_t      sched_mp;
 } ucc_cl_hier_context_t;
 UCC_CLASS_DECLARE(ucc_cl_hier_context_t, const ucc_base_context_params_t *,
                   const ucc_base_config_t *);

@@ -33,8 +33,8 @@ static void send_completion_1(void *request, ucs_status_t status,
 {
     ucc_tl_ucp_task_t *task = (ucc_tl_ucp_task_t *)user_data;
 
-    send_completion_common(request, status, user_data);
     task->reduce_scatterv_ring.s_scratch_busy[0] = 0;
+    send_completion_common(request, status, user_data);
 }
 
 static void send_completion_2(void *request, ucs_status_t status,
@@ -42,8 +42,8 @@ static void send_completion_2(void *request, ucs_status_t status,
 {
     ucc_tl_ucp_task_t *task = (ucc_tl_ucp_task_t *)user_data;
 
-    send_completion_common(request, status, user_data);
     task->reduce_scatterv_ring.s_scratch_busy[1] = 0;
+    send_completion_common(request, status, user_data);
 }
 
 static inline void ucc_ring_frag_count(ucc_tl_ucp_task_t *task,
@@ -88,19 +88,6 @@ static inline void ucc_ring_frag_block_offset(ucc_tl_ucp_task_t *task,
     *block_offset = get_block_offset(&TASK_ARGS(task), block);
 }
 
-static inline ucc_status_t ucc_tl_ucp_test_ring(ucc_tl_ucp_task_t *task)
-{
-    int polls = 0;
-    while (polls++ < task->n_polls) {
-        if (task->tagged.send_posted - task->tagged.send_completed <= 1 &&
-            task->tagged.recv_posted == task->tagged.recv_completed) {
-            return UCC_OK;
-        }
-        ucp_worker_progress(TASK_CTX(task)->ucp_worker);
-    }
-    return UCC_INPROGRESS;
-}
-
 static void ucc_tl_ucp_reduce_scatterv_ring_progress(ucc_coll_task_t *coll_task)
 {
     ucc_tl_ucp_task_t *     task = ucc_derived_of(coll_task, ucc_tl_ucp_task_t);
@@ -119,8 +106,8 @@ static void ucc_tl_ucp_reduce_scatterv_ring_progress(ucc_coll_task_t *coll_task)
     ucc_status_t            status;
     size_t max_block_size, block_offset, frag_count, frag_offset, final_offset;
     int    step, is_avg, id;
-    char * busy;
     void * r_scratch, *s_scratch[2], *reduce_target;
+    volatile char *busy;
 
     final_offset = 0;
     if (UCC_IS_INPLACE(*args)) {
@@ -184,7 +171,7 @@ static void ucc_tl_ucp_reduce_scatterv_ring_progress(ucc_coll_task_t *coll_task)
 
         busy[id] = 1;
         UCPCHECK_GOTO(ucc_tl_ucp_send_cb(reduce_target, frag_count * dt_size,
-                                         mem_type, sendto, team, task, cb[id]),
+                                         mem_type, sendto, team, task, cb[id], (void *)task),
                       task, out);
 
         recv_data_from = (rank - 2 - step + size) % size;
@@ -398,32 +385,35 @@ ucc_tl_ucp_reduce_scatterv_ring_init(ucc_base_coll_args_t *coll_args,
     count_per_set = (max_segcount + n_subsets - 1) / n_subsets;
 
     to_alloc_per_set = count_per_set * 3;
-    status           = ucc_mc_alloc(&tl_schedule->scratch_mc_header,
-                          to_alloc_per_set * dt_size * n_subsets, mem_type);
-    if (status != UCC_OK) {
-        ucc_tl_ucp_put_schedule(schedule);
-        return status;
-    }
+    UCC_CHECK_GOTO(ucc_mc_alloc(&tl_schedule->scratch_mc_header,
+                                to_alloc_per_set * dt_size * n_subsets,
+                                mem_type),
+                   out, status);
 
     for (i = 0; i < n_subsets; i++) {
-        status = ucc_tl_ucp_reduce_scatterv_ring_init_subset(
-            coll_args, team, &ctask, s[i], n_subsets, i,
-            PTR_OFFSET(tl_schedule->scratch_mc_header->addr,
-                       to_alloc_per_set * i * dt_size),
-            count_per_set);
-        if (UCC_OK != status) {
-            tl_error(UCC_TL_TEAM_LIB(tl_team), "failed to allocate ring task");
-            return status;
-        }
+        UCC_CHECK_GOTO(ucc_tl_ucp_reduce_scatterv_ring_init_subset(
+                           coll_args, team, &ctask, s[i], n_subsets, i,
+                           PTR_OFFSET(tl_schedule->scratch_mc_header->addr,
+                                      to_alloc_per_set * i * dt_size),
+                           count_per_set),
+                       out_free, status);
         ctask->n_deps = 1;
-        ucc_schedule_add_task(schedule, ctask);
-        ucc_event_manager_subscribe(&schedule->super.em,
-                                    UCC_EVENT_SCHEDULE_STARTED, ctask,
-                                    ucc_task_start_handler);
+        UCC_CHECK_GOTO(ucc_schedule_add_task(schedule, ctask), out_free,
+                       status);
+        UCC_CHECK_GOTO(ucc_event_manager_subscribe(
+                           &schedule->super, UCC_EVENT_SCHEDULE_STARTED, ctask,
+                           ucc_task_start_handler),
+                       out_free, status);
     }
     schedule->super.flags   |= UCC_COLL_TASK_FLAG_EXECUTOR;
     schedule->super.post     = ucc_tl_ucp_reduce_scatterv_ring_sched_post;
     schedule->super.finalize = ucc_tl_ucp_reduce_scatterv_ring_sched_finalize;
     *task_h                  = &schedule->super;
     return UCC_OK;
+
+out_free:
+    ucc_mc_free(tl_schedule->scratch_mc_header);
+out:
+    ucc_tl_ucp_put_schedule(schedule);
+    return status;
 }

@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * Copyright (c) 2020-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * See file LICENSE for terms.
  */
@@ -18,12 +18,6 @@ static const char *stream_task_modes[] = {
     [UCC_EC_CUDA_TASK_LAST]    = NULL
 };
 
-static const char *task_stream_types[] = {
-    [UCC_EC_CUDA_USER_STREAM]      = "user",
-    [UCC_EC_CUDA_INTERNAL_STREAM]  = "ucc",
-    [UCC_EC_CUDA_TASK_STREAM_LAST] = NULL
-};
-
 static ucc_config_field_t ucc_ec_cuda_config_table[] = {
     {"", "", NULL, ucc_offsetof(ucc_ec_cuda_config_t, super),
      UCC_CONFIG_TYPE_TABLE(ucc_ec_config_table)},
@@ -36,25 +30,13 @@ static ucc_config_field_t ucc_ec_cuda_config_table[] = {
      ucc_offsetof(ucc_ec_cuda_config_t, strm_task_mode),
      UCC_CONFIG_TYPE_ENUM(stream_task_modes)},
 
-    {"TASK_STREAM", "user",
-     "Stream for cuda task\n"
-     "user - user stream provided in execution engine context\n"
-     "ucc  - ucc library internal stream",
-     ucc_offsetof(ucc_ec_cuda_config_t, task_strm_type),
-     UCC_CONFIG_TYPE_ENUM(task_stream_types)},
-
-    {"STREAM_BLOCKING_WAIT", "1",
-     "Stream is blocked until collective operation is done",
-     ucc_offsetof(ucc_ec_cuda_config_t, stream_blocking_wait),
-     UCC_CONFIG_TYPE_UINT},
-
     {"EXEC_NUM_WORKERS", "1",
-     "Number of thread blocks to use for cuda executor",
+     "Number of thread blocks to use for cuda persistent executor",
      ucc_offsetof(ucc_ec_cuda_config_t, exec_num_workers),
      UCC_CONFIG_TYPE_ULUNITS},
 
     {"EXEC_NUM_THREADS", "512",
-     "Number of thread per block to use for cuda executor",
+     "Number of threads per block to use for cuda persistent executor",
      ucc_offsetof(ucc_ec_cuda_config_t, exec_num_threads),
      UCC_CONFIG_TYPE_ULUNITS},
 
@@ -73,11 +55,22 @@ static ucc_config_field_t ucc_ec_cuda_config_table[] = {
      ucc_offsetof(ucc_ec_cuda_config_t, reduce_num_blocks),
      UCC_CONFIG_TYPE_ULUNITS},
 
+    {"REDUCE_NUM_THREADS", "auto",
+     "Number of threads per block to use for reduction in interruptible "
+     "executor",
+     ucc_offsetof(ucc_ec_cuda_config_t, reduce_num_threads),
+     UCC_CONFIG_TYPE_ULUNITS},
+
+    {"USE_COOPERATIVE_LAUNCH", "0",
+     "whether to use cooperative launch in persistent kernel executor",
+     ucc_offsetof(ucc_ec_cuda_config_t, use_cooperative_launch),
+     UCC_CONFIG_TYPE_BOOL},
+
     {NULL}
 
 };
 
-static ucc_status_t ucc_ec_cuda_ee_executor_mpool_chunk_malloc(ucc_mpool_t *mp,
+static ucc_status_t ucc_ec_cuda_ee_executor_mpool_chunk_malloc(ucc_mpool_t *mp, //NOLINT: mp is unused
                                                                size_t *size_p,
                                                                void ** chunk_p)
 {
@@ -85,14 +78,14 @@ static ucc_status_t ucc_ec_cuda_ee_executor_mpool_chunk_malloc(ucc_mpool_t *mp,
                                    cudaHostAllocMapped));
 }
 
-static void ucc_ec_cuda_ee_executor_mpool_chunk_free(ucc_mpool_t *mp,
+static void ucc_ec_cuda_ee_executor_mpool_chunk_free(ucc_mpool_t *mp, //NOLINT: mp is unused
                                                      void *chunk)
 {
     CUDA_FUNC(cudaFreeHost(chunk));
 }
 
-static void ucc_ec_cuda_executor_chunk_init(ucc_mpool_t *mp, void *obj,
-                                            void *chunk)
+static void ucc_ec_cuda_executor_chunk_init(ucc_mpool_t *mp, void *obj, //NOLINT: mp is unused
+                                            void *chunk) //NOLINT: chunk is unused
 {
     ucc_ec_cuda_executor_t *eee       = (ucc_ec_cuda_executor_t*) obj;
     int                     max_tasks = EC_CUDA_CONFIG->exec_max_tasks;
@@ -103,7 +96,8 @@ static void ucc_ec_cuda_executor_chunk_init(ucc_mpool_t *mp, void *obj,
                   (void**)(&eee->dev_pidx), (void *)&eee->pidx, 0));
     CUDA_FUNC(cudaMalloc((void**)&eee->dev_cidx, sizeof(*eee->dev_cidx)));
     CUDA_FUNC(cudaHostAlloc((void**)&eee->tasks,
-                            max_tasks * sizeof(ucc_ee_executor_task_t),
+                            max_tasks * MAX_SUBTASKS *
+                            sizeof(ucc_ee_executor_task_args_t),
                             cudaHostAllocMapped));
     CUDA_FUNC(cudaHostGetDevicePointer(
                   (void**)(&eee->dev_tasks), (void *)eee->tasks, 0));
@@ -112,7 +106,7 @@ static void ucc_ec_cuda_executor_chunk_init(ucc_mpool_t *mp, void *obj,
     }
 }
 
-static void ucc_ec_cuda_executor_chunk_cleanup(ucc_mpool_t *mp, void *obj)
+static void ucc_ec_cuda_executor_chunk_cleanup(ucc_mpool_t *mp, void *obj) //NOLINT: mp is unused
 {
     ucc_ec_cuda_executor_t *eee = (ucc_ec_cuda_executor_t*) obj;
 
@@ -131,46 +125,14 @@ static ucc_mpool_ops_t ucc_ec_cuda_ee_executor_mpool_ops = {
     .obj_cleanup   = ucc_ec_cuda_executor_chunk_cleanup,
 };
 
-static ucc_status_t ucc_ec_cuda_stream_req_mpool_chunk_malloc(ucc_mpool_t *mp,
-                                                              size_t *size_p,
-                                                              void ** chunk_p)
-{
-    ucc_status_t status;
-
-    status = CUDA_FUNC(cudaHostAlloc((void**)chunk_p, *size_p,
-                       cudaHostAllocMapped));
-    return status;
-}
-
-static void ucc_ec_cuda_stream_req_mpool_chunk_free(ucc_mpool_t *mp,
-                                                    void *       chunk)
-{
-    cudaFreeHost(chunk);
-}
-
-static void ucc_ec_cuda_stream_req_init(ucc_mpool_t *mp, void *obj, void *chunk)
-{
-    ucc_ec_cuda_stream_request_t *req = (ucc_ec_cuda_stream_request_t*) obj;
-
-    CUDA_FUNC(cudaHostGetDevicePointer(
-                  (void**)(&req->dev_status), (void *)&req->status, 0));
-}
-
-static ucc_mpool_ops_t ucc_ec_cuda_stream_req_mpool_ops = {
-    .chunk_alloc   = ucc_ec_cuda_stream_req_mpool_chunk_malloc,
-    .chunk_release = ucc_ec_cuda_stream_req_mpool_chunk_free,
-    .obj_init      = ucc_ec_cuda_stream_req_init,
-    .obj_cleanup   = NULL
-};
-
-static void ucc_ec_cuda_event_init(ucc_mpool_t *mp, void *obj, void *chunk)
+static void ucc_ec_cuda_event_init(ucc_mpool_t *mp, void *obj, void *chunk) //NOLINT: mp is unused
 {
     ucc_ec_cuda_event_t *base = (ucc_ec_cuda_event_t *) obj;
 
     CUDA_FUNC(cudaEventCreateWithFlags(&base->event, cudaEventDisableTiming));
 }
 
-static void ucc_ec_cuda_event_cleanup(ucc_mpool_t *mp, void *obj)
+static void ucc_ec_cuda_event_cleanup(ucc_mpool_t *mp, void *obj) //NOLINT: mp is unused
 {
     ucc_ec_cuda_event_t *base = (ucc_ec_cuda_event_t *) obj;
 
@@ -184,38 +146,35 @@ static ucc_mpool_ops_t ucc_ec_cuda_event_mpool_ops = {
     .obj_cleanup   = ucc_ec_cuda_event_cleanup,
 };
 
-ucc_status_t ucc_ec_cuda_post_kernel_stream_task(uint32_t *status,
-                                                 int blocking_wait,
-                                                 cudaStream_t stream);
-
-static ucc_status_t ucc_ec_cuda_post_driver_stream_task(uint32_t *status,
-                                                        int blocking_wait,
-                                                        cudaStream_t stream)
+static inline void ucc_ec_cuda_set_threads_nbr(int *nt, int maxThreadsPerBlock)
 {
-    CUdeviceptr status_ptr  = (CUdeviceptr)status;
-
-    if (blocking_wait) {
-        CUDADRV_FUNC(cuStreamWriteValue32(stream, status_ptr,
-                                          UCC_EC_CUDA_TASK_STARTED, 0));
-        CUDADRV_FUNC(cuStreamWaitValue32(stream, status_ptr,
-                                         UCC_EC_CUDA_TASK_COMPLETED,
-                                         CU_STREAM_WAIT_VALUE_EQ));
+    if (*nt != UCC_ULUNITS_AUTO) {
+        if (maxThreadsPerBlock < *nt) {
+            ec_warn(
+                &ucc_ec_cuda.super,
+                "number of threads per block is too large, max supported is %d",
+                maxThreadsPerBlock);
+        } else if ((*nt % WARP_SIZE) != 0) {
+            ec_warn(&ucc_ec_cuda.super,
+                    "number of threads per block must be divisible by "
+                    "WARP_SIZE(=%d)",
+                    WARP_SIZE);
+        } else {
+            return;
+        }
     }
-    CUDADRV_FUNC(cuStreamWriteValue32(stream, status_ptr,
-                                      UCC_EC_CUDA_TASK_COMPLETED_ACK, 0));
-    return UCC_OK;
+
+    *nt = (maxThreadsPerBlock / WARP_SIZE) * WARP_SIZE;
 }
 
 static ucc_status_t ucc_ec_cuda_init(const ucc_ec_params_t *ec_params)
 {
     ucc_ec_cuda_config_t *cfg = EC_CUDA_CONFIG;
     ucc_status_t          status;
-    int                   device, num_devices, attr;
-    CUdevice              cu_dev;
-    CUresult              cu_st;
+    int                   device, num_devices;
     cudaError_t           cuda_st;
-    const char           *cu_err_st_str;
     struct cudaDeviceProp prop;
+    int                   supportsCoopLaunch = 0;
 
     ucc_ec_cuda.stream                   = NULL;
     ucc_ec_cuda.stream_initialized       = 0;
@@ -226,23 +185,33 @@ static ucc_status_t ucc_ec_cuda_init(const ucc_ec_params_t *ec_params)
     ucc_ec_cuda.thread_mode = ec_params->thread_mode;
     cuda_st = cudaGetDeviceCount(&num_devices);
     if ((cuda_st != cudaSuccess) || (num_devices == 0)) {
-        ec_info(&ucc_ec_cuda.super, "CUDA devices are not found");
+        ec_debug(&ucc_ec_cuda.super, "CUDA devices are not found");
         return UCC_ERR_NO_RESOURCE;
     }
     CUDA_CHECK(cudaGetDevice(&device));
 
     CUDA_CHECK(cudaGetDeviceProperties(&prop, device));
-    cfg->reduce_num_threads = prop.maxThreadsPerBlock;
+
+    ucc_ec_cuda_set_threads_nbr((int *)&cfg->exec_num_threads,
+                                prop.maxThreadsPerBlock);
+    ucc_ec_cuda_set_threads_nbr(&cfg->reduce_num_threads,
+                                prop.maxThreadsPerBlock);
 
     if (cfg->reduce_num_blocks != UCC_ULUNITS_AUTO) {
         if (prop.maxGridSize[0] < cfg->reduce_num_blocks) {
             ec_warn(&ucc_ec_cuda.super,
-                    "number of blocks is too large, max supported %d",
+                    "number of blocks is too large, max supported is %d",
                     prop.maxGridSize[0]);
             cfg->reduce_num_blocks = prop.maxGridSize[0];
         }
     } else {
         cfg->reduce_num_blocks = prop.maxGridSize[0];
+    }
+
+    if (cfg->exec_num_streams < 1) {
+        ec_warn(&ucc_ec_cuda.super,
+                "number of streams is too small, min supported 1");
+        cfg->exec_num_streams = 1;
     }
 
     /*create event pool */
@@ -262,16 +231,6 @@ static ucc_status_t ucc_ec_cuda_init(const ucc_ec_params_t *ec_params)
         return status;
     }
 
-    /* create request pool */
-    status = ucc_mpool_init(
-        &ucc_ec_cuda.strm_reqs, 0, sizeof(ucc_ec_cuda_stream_request_t), 0,
-        UCC_CACHE_LINE_SIZE, 16, UINT_MAX, &ucc_ec_cuda_stream_req_mpool_ops,
-        UCC_THREAD_MULTIPLE, "CUDA Event Objects");
-    if (status != UCC_OK) {
-        ec_error(&ucc_ec_cuda.super, "failed to create event pool");
-        return status;
-    }
-
     status = ucc_mpool_init(
         &ucc_ec_cuda.executors, 0, sizeof(ucc_ec_cuda_executor_t), 0,
         UCC_CACHE_LINE_SIZE, 16, UINT_MAX, &ucc_ec_cuda_ee_executor_mpool_ops,
@@ -286,16 +245,32 @@ static ucc_status_t ucc_ec_cuda_init(const ucc_ec_params_t *ec_params)
         sizeof(ucc_ec_cuda_executor_interruptible_task_t), 0, UCC_CACHE_LINE_SIZE,
         16, UINT_MAX, NULL, UCC_THREAD_MULTIPLE,
         "interruptible executor tasks");
+    if (status != UCC_OK) {
+        ec_error(&ucc_ec_cuda.super, "failed to create interruptible tasks pool");
+        return status;
+    }
+
+    status = ucc_mpool_init(
+        &ucc_ec_cuda.executor_persistent_tasks, 0,
+        sizeof(ucc_ec_cuda_executor_persistent_task_t), 0, UCC_CACHE_LINE_SIZE,
+        16, UINT_MAX, NULL, UCC_THREAD_MULTIPLE,
+        "persistent executor tasks");
+    if (status != UCC_OK) {
+        ec_error(&ucc_ec_cuda.super, "failed to create persistent tasks pool");
+        return status;
+    }
 
     if (cfg->strm_task_mode == UCC_EC_CUDA_TASK_KERNEL) {
         ucc_ec_cuda.strm_task_mode = UCC_EC_CUDA_TASK_KERNEL;
-        ucc_ec_cuda.post_strm_task = ucc_ec_cuda_post_kernel_stream_task;
     } else {
         ucc_ec_cuda.strm_task_mode = UCC_EC_CUDA_TASK_MEM_OPS;
-        ucc_ec_cuda.post_strm_task = ucc_ec_cuda_post_driver_stream_task;
-
+#if CUDA_VERSION < 12000
+        CUresult cu_st;
+        CUdevice cu_dev;
+        int attr;
         cu_st = cuCtxGetDevice(&cu_dev);
         if (cu_st != CUDA_SUCCESS){
+            const char *cu_err_st_str;
             cuGetErrorString(cu_st, &cu_err_st_str);
             ec_debug(&ucc_ec_cuda.super, "cuCtxGetDevice() failed: %s",
                      cu_err_st_str);
@@ -308,18 +283,29 @@ static ucc_status_t ucc_ec_cuda_init(const ucc_ec_params_t *ec_params)
 
         if (cfg->strm_task_mode == UCC_EC_CUDA_TASK_AUTO) {
             if (attr == 0) {
-                ec_info(&ucc_ec_cuda.super,
-                        "CUDA MEM OPS are not supported or disabled");
+                ec_debug(&ucc_ec_cuda.super,
+                         "CUDA MEM OPS are not supported or disabled");
                 ucc_ec_cuda.strm_task_mode = UCC_EC_CUDA_TASK_KERNEL;
-                ucc_ec_cuda.post_strm_task = ucc_ec_cuda_post_kernel_stream_task;
             }
         } else if (attr == 0) {
             ec_error(&ucc_ec_cuda.super,
                      "CUDA MEM OPS are not supported or disabled");
             return UCC_ERR_NOT_SUPPORTED;
         }
+#endif
     }
-    ucc_ec_cuda.task_strm_type = cfg->task_strm_type;
+
+    if (cfg->use_cooperative_launch == 1) {
+        cudaDeviceGetAttribute(&supportsCoopLaunch,
+                               cudaDevAttrCooperativeLaunch, device);
+        if (!supportsCoopLaunch) {
+            cfg->use_cooperative_launch = 0;
+            ec_warn(&ucc_ec_cuda.super,
+                     "CUDA cooperative groups are not supported. "
+                     "Fall back to non cooperative launch.");
+        }
+    }
+
     ucc_spinlock_init(&ucc_ec_cuda.init_spinlock, 0);
     return UCC_OK;
 }
@@ -329,96 +315,6 @@ static ucc_status_t ucc_ec_cuda_get_attr(ucc_ec_attr_t *ec_attr)
     if (ec_attr->field_mask & UCC_EC_ATTR_FIELD_THREAD_MODE) {
         ec_attr->thread_mode = ucc_ec_cuda.thread_mode;
     }
-    return UCC_OK;
-}
-
-ucc_status_t ucc_ec_cuda_task_post(void *ee_stream, void **ee_req)
-{
-    ucc_ec_cuda_config_t         *cfg = EC_CUDA_CONFIG;
-    ucc_ec_cuda_stream_request_t *req;
-    ucc_ec_cuda_event_t          *cuda_event;
-    ucc_status_t                  status;
-
-    UCC_EC_CUDA_INIT_STREAM();
-    req = ucc_mpool_get(&ucc_ec_cuda.strm_reqs);
-    if (ucc_unlikely(!req)) {
-        ec_error(&ucc_ec_cuda.super, "failed to get stream request from mpool");
-        return UCC_ERR_NO_MEMORY;
-    }
-    req->status = UCC_EC_CUDA_TASK_POSTED;
-    req->stream = (cudaStream_t)ee_stream;
-
-    if (ucc_ec_cuda.task_strm_type == UCC_EC_CUDA_USER_STREAM) {
-        status = ucc_ec_cuda.post_strm_task(req->dev_status,
-                                            cfg->stream_blocking_wait,
-                                            req->stream);
-        if (ucc_unlikely(status != UCC_OK)) {
-            goto free_req;
-        }
-    } else {
-        cuda_event = ucc_mpool_get(&ucc_ec_cuda.events);
-        if (ucc_unlikely(!cuda_event)) {
-            ec_error(&ucc_ec_cuda.super, "failed to get event from mpool");
-            status = UCC_ERR_NO_MEMORY;
-            goto free_req;
-        }
-
-        CUDA_CHECK(cudaEventRecord(cuda_event->event, req->stream));
-        CUDA_CHECK(cudaStreamWaitEvent(ucc_ec_cuda.stream, cuda_event->event, 0));
-        status = ucc_ec_cuda.post_strm_task(req->dev_status,
-                                            cfg->stream_blocking_wait,
-                                            ucc_ec_cuda.stream);
-        if (ucc_unlikely(status != UCC_OK)) {
-            goto free_event;
-        }
-        CUDA_CHECK(cudaEventRecord(cuda_event->event, ucc_ec_cuda.stream));
-        CUDA_CHECK(cudaStreamWaitEvent(req->stream, cuda_event->event, 0));
-        ucc_mpool_put(cuda_event);
-    }
-
-    *ee_req = (void *) req;
-
-    ec_info(&ucc_ec_cuda.super, "stream task posted on \"%s\" stream. req:%p",
-            task_stream_types[ucc_ec_cuda.task_strm_type], req);
-
-    return UCC_OK;
-
-free_event:
-    ucc_mpool_put(cuda_event);
-free_req:
-    ucc_mpool_put(req);
-    return status;
-}
-
-ucc_status_t ucc_ec_cuda_task_query(void *ee_req)
-{
-    ucc_ec_cuda_stream_request_t *req = ee_req;
-
-    /* ee task might be only in POSTED, STARTED or COMPLETED_ACK state
-       COMPLETED state is used by ucc_ee_cuda_task_end function to request
-       stream unblock*/
-    ucc_assert(req->status != UCC_EC_CUDA_TASK_COMPLETED);
-    if (req->status == UCC_EC_CUDA_TASK_POSTED) {
-        return UCC_INPROGRESS;
-    }
-    ec_info(&ucc_ec_cuda.super, "stream task started. req:%p", req);
-    return UCC_OK;
-}
-
-ucc_status_t ucc_ec_cuda_task_end(void *ee_req)
-{
-    ucc_ec_cuda_stream_request_t *req = ee_req;
-    volatile ucc_ec_task_status_t *st = &req->status;
-
-    /* can be safely ended only if it's in STARTED or COMPLETED_ACK state */
-    ucc_assert((*st != UCC_EC_CUDA_TASK_POSTED) &&
-               (*st != UCC_EC_CUDA_TASK_COMPLETED));
-    if (*st == UCC_EC_CUDA_TASK_STARTED) {
-        *st = UCC_EC_CUDA_TASK_COMPLETED;
-        while(*st != UCC_EC_CUDA_TASK_COMPLETED_ACK) { }
-    }
-    ucc_mpool_put(req);
-    ec_info(&ucc_ec_cuda.super, "stream task done. req:%p", req);
     return UCC_OK;
 }
 
@@ -484,8 +380,9 @@ static ucc_status_t ucc_ec_cuda_finalize()
     }
 
     ucc_mpool_cleanup(&ucc_ec_cuda.events, 1);
-    ucc_mpool_cleanup(&ucc_ec_cuda.strm_reqs, 1);
     ucc_mpool_cleanup(&ucc_ec_cuda.executors, 1);
+    ucc_mpool_cleanup(&ucc_ec_cuda.executor_interruptible_tasks, 1);
+    ucc_mpool_cleanup(&ucc_ec_cuda.executor_persistent_tasks, 1);
     ucc_free(ucc_ec_cuda.exec_streams);
 
     return UCC_OK;
@@ -505,9 +402,6 @@ ucc_ec_cuda_t ucc_ec_cuda = {
             .table  = ucc_ec_cuda_config_table,
             .size   = sizeof(ucc_ec_cuda_config_t),
         },
-    .super.ops.task_post              = ucc_ec_cuda_task_post,
-    .super.ops.task_query             = ucc_ec_cuda_task_query,
-    .super.ops.task_end               = ucc_ec_cuda_task_end,
     .super.ops.create_event           = ucc_ec_cuda_event_create,
     .super.ops.destroy_event          = ucc_ec_cuda_event_destroy,
     .super.ops.event_post             = ucc_ec_cuda_event_post,

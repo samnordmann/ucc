@@ -3,6 +3,7 @@
  *
  * See file LICENSE for terms.
  */
+
 #include "ucc_coll_score.h"
 #include "utils/ucc_coll_utils.h"
 #include "utils/ucc_string.h"
@@ -87,7 +88,7 @@ ucc_status_t ucc_coll_score_map_lookup(ucc_score_map_t      *map,
     ucc_list_link_t  *list;
     ucc_msg_range_t  *r;
 
-    if (mt == UCC_MEMORY_TYPE_ASSYMETRIC) {
+    if (mt == UCC_MEMORY_TYPE_ASYMMETRIC) {
         /* TODO */
         return UCC_ERR_NOT_SUPPORTED;
     } else if (mt == UCC_MEMORY_TYPE_NOT_APPLY) {
@@ -95,7 +96,7 @@ ucc_status_t ucc_coll_score_map_lookup(ucc_score_map_t      *map,
            "host" range list */
         mt = UCC_MEMORY_TYPE_HOST;
     }
-    if (msgsize == UCC_MSG_SIZE_INVALID || msgsize == UCC_MSG_SIZE_ASSYMETRIC) {
+    if (msgsize == UCC_MSG_SIZE_INVALID || msgsize == UCC_MSG_SIZE_ASYMMETRIC) {
         /* These algorithms require global communication to get the same msgsize estimation.
            Can't use msg ranges. Use msize 0 (assuming the range list should only contain 1
            range [0:inf]) */
@@ -179,7 +180,7 @@ void ucc_coll_score_map_print_info(const ucc_score_map_t *map)
         coll_str[0] = '\0';
         left        = sizeof(coll_str);
         STR_APPEND(coll_str, left, 32, "%s:\n",
-                   ucc_coll_type_str(UCC_BIT(i)));
+                   ucc_coll_type_str((ucc_coll_type_t)UCC_BIT(i)));
         for (j = 0; j < UCC_MEMORY_TYPE_LAST; j++) {
             if (ucc_list_is_empty(&map->score->scores[i][j])) {
                 continue;

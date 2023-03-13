@@ -1,5 +1,6 @@
 /**
- * Copyright (c) 2020, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * Copyright (c) 2020-2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ *
  * See file LICENSE for terms.
  */
 
@@ -13,8 +14,9 @@
 #include <ucs/sys/preprocessor.h>
 #include <ucs/sys/compiler_def.h>
 #include <ucs/debug/log_def.h>
-#if ENABLE_DEBUG == 1
-#include <assert.h>
+
+#ifndef SIZE_MAX
+#define SIZE_MAX ((size_t) -1)
 #endif
 
 #define ucc_offsetof      ucs_offsetof
@@ -52,6 +54,9 @@ typedef int                        ucc_score_t;
 #else
 #define UCC_F_NOOPTIMIZE
 #endif
+
+/* A function which does not return */
+#define UCC_F_NORETURN __attribute__((noreturn))
 
 #define UCC_COPY_PARAM_BY_FIELD(_dst, _src, _FIELD, _field)                    \
     do {                                                                       \
@@ -98,11 +103,14 @@ static inline ucs_status_t ucc_status_to_ucs_status(ucc_status_t status)
     return UCS_ERR_NO_MESSAGE;
 }
 
-#if ENABLE_DEBUG == 1
-#define ucc_assert(_cond) assert(_cond)
-#else
-#define ucc_assert(_cond)
-#endif
-
 #define ucc_for_each_bit ucs_for_each_bit
+
+#define UCC_CHECK_GOTO(_cmd, _label, _status)                                  \
+    do {                                                                       \
+        _status = (_cmd);                                                      \
+        if (ucc_unlikely(_status != UCC_OK)) {                                 \
+            goto _label;                                                       \
+        }                                                                      \
+    } while (0)
+
 #endif

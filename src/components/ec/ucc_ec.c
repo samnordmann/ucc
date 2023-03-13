@@ -1,5 +1,6 @@
 /**
- * Copyright (c) 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * Copyright (c) 2022-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ *
  * See file LICENSE for terms.
  */
 
@@ -40,18 +41,17 @@ ucc_status_t ucc_ec_init(const ucc_ec_params_t *ec_params)
                 continue;
             }
             status = ucc_config_parser_fill_opts(
-                ec->config, ec->config_table.table, "UCC_",
-                ec->config_table.prefix, 1);
+                ec->config, &ec->config_table, "UCC_", 1);
             if (UCC_OK != status) {
-                ucc_info("failed to parse config for EC component: %s (%d)",
-                         ec->super.name, status);
+                ucc_debug("failed to parse config for EC component: %s (%d)",
+                          ec->super.name, status);
                 ucc_free(ec->config);
                 continue;
             }
             status = ec->init(ec_params);
             if (UCC_OK != status) {
-                ucc_info("ec_init failed for component: %s, skipping (%d)",
-                         ec->super.name, status);
+                ucc_debug("ec_init failed for component: %s, skipping (%d)",
+                          ec->super.name, status);
                 ucc_config_parser_release_opts(ec->config,
                                                ec->config_table.table);
                 ucc_free(ec->config);
@@ -102,7 +102,7 @@ ucc_status_t ucc_ec_finalize()
     ucc_ee_type_t  et;
     ucc_ec_base_t *ec;
 
-    for (et = UCC_EE_CPU_THREAD; et < UCC_EE_LAST; et++) {
+    for (et = UCC_EE_FIRST; et < UCC_EE_LAST; et++) {
         if (NULL != ec_ops[et]) {
             ec = ucc_container_of(ec_ops[et], ucc_ec_base_t, ops);
             ec->ref_cnt--;
@@ -117,25 +117,6 @@ ucc_status_t ucc_ec_finalize()
     }
 
     return UCC_OK;
-}
-
-ucc_status_t ucc_ec_task_post(void *ee_context, ucc_ee_type_t ee_type,
-                              void **ee_task)
-{
-    UCC_CHECK_EC_AVAILABLE(ee_type);
-    return ec_ops[ee_type]->task_post(ee_context, ee_task);
-}
-
-ucc_status_t ucc_ec_task_query(void *ee_task, ucc_ee_type_t ee_type)
-{
-    UCC_CHECK_EC_AVAILABLE(ee_type);
-    return ec_ops[ee_type]->task_query(ee_task);
-}
-
-ucc_status_t ucc_ec_task_end(void *ee_task, ucc_ee_type_t ee_type)
-{
-    UCC_CHECK_EC_AVAILABLE(ee_type);
-    return ec_ops[ee_type]->task_end(ee_task);
 }
 
 ucc_status_t ucc_ec_create_event(void **event, ucc_ee_type_t ee_type)

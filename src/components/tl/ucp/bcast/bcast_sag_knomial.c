@@ -38,6 +38,20 @@
  */
 ucc_status_t ucc_tl_ucp_bcast_sag_knomial_start(ucc_coll_task_t *coll_task)
 {
+    ucc_schedule_t  *schedule = ucc_derived_of(coll_task, ucc_schedule_t);
+    ucc_coll_args_t *args     = &schedule->super.bargs.args;
+    ucc_coll_task_t *ag_task, *scatter_task;
+
+    scatter_task                             = schedule->tasks[0];
+    scatter_task->bargs.args.src.info.buffer = args->src.info.buffer;
+    scatter_task->bargs.args.dst.info.buffer = args->src.info.buffer;
+    scatter_task->bargs.args.src.info.count  = args->src.info.count;
+    scatter_task->bargs.args.dst.info.count  = args->src.info.count;
+
+    ag_task                             = schedule->tasks[1];
+    ag_task->bargs.args.dst.info.buffer = args->src.info.buffer;
+    ag_task->bargs.args.dst.info.count  = args->src.info.count;
+
     UCC_TL_UCP_PROFILE_REQUEST_EVENT(coll_task, "ucp_bcast_sag_kn_start", 0);
     return ucc_schedule_start(coll_task);
 }
@@ -85,31 +99,28 @@ ucc_tl_ucp_bcast_sag_knomial_init(ucc_base_coll_args_t *coll_args,
     args.args.dst.info.mem_type = args.args.src.info.mem_type;
     args.args.dst.info.datatype = args.args.src.info.datatype;
     args.args.dst.info.count    = args.args.src.info.count;
-    status = ucc_tl_ucp_scatter_knomial_init_r(&args, team, &task, radix);
-    if (UCC_OK != status) {
-        tl_error(UCC_TL_TEAM_LIB(tl_team),
-                 "failed to init scatter_knomial task");
-        goto out;
-    }
-    ucc_schedule_add_task(schedule, task);
-    ucc_event_manager_subscribe(&schedule->super.em, UCC_EVENT_SCHEDULE_STARTED,
-                                task, ucc_task_start_handler);
+    UCC_CHECK_GOTO(ucc_tl_ucp_scatter_knomial_init_r(&args, team, &task, radix),
+                   out, status);
+
+    UCC_CHECK_GOTO(ucc_schedule_add_task(schedule, task), out, status);
+    UCC_CHECK_GOTO(ucc_event_manager_subscribe(&schedule->super,
+                                               UCC_EVENT_SCHEDULE_STARTED, task,
+                                               ucc_task_start_handler),
+                   out, status);
     rs_task = task;
 
     /* 2nd step of bcast: knomial allgather. 2nd task subscribes
      to completion event of scatter task. */
     args.args.mask  |= UCC_COLL_ARGS_FIELD_FLAGS;
     args.args.flags |= UCC_COLL_ARGS_FLAG_IN_PLACE;
-    status = ucc_tl_ucp_allgather_knomial_init_r(&args, team, &task, radix);
-    if (UCC_OK != status) {
-        tl_error(UCC_TL_TEAM_LIB(tl_team),
-                 "failed to init allgather_knomial task");
-        goto out;
-    }
+    UCC_CHECK_GOTO(
+        ucc_tl_ucp_allgather_knomial_init_r(&args, team, &task, radix), out,
+        status);
 
-    ucc_schedule_add_task(schedule, task);
-    ucc_event_manager_subscribe(&rs_task->em, UCC_EVENT_COMPLETED, task,
-                                ucc_task_start_handler);
+    UCC_CHECK_GOTO(ucc_schedule_add_task(schedule, task), out, status);
+    UCC_CHECK_GOTO(ucc_event_manager_subscribe(rs_task, UCC_EVENT_COMPLETED,
+                                               task, ucc_task_start_handler),
+                   out, status);
 
     schedule->super.post           = ucc_tl_ucp_bcast_sag_knomial_start;
     schedule->super.progress       = NULL;

@@ -93,19 +93,27 @@ gtest_SOURCES =                     \
 	coll/test_allreduce.cc          \
 	coll/test_reduce_scatter.cc     \
 	coll/test_reduce_scatterv.cc    \
+	coll/test_scatter.cc         	\
 	utils/test_string.cc            \
 	utils/test_ep_map.cc            \
 	utils/test_lock_free_queue.cc   \
 	utils/test_math.cc              \
 	utils/test_cfg_file.cc          \
+	utils/test_parser.cc            \
 	coll_score/test_score.cc        \
 	coll_score/test_score_str.cc    \
 	coll_score/test_score_update.cc \
 	active_set/test_active_set.cc
 
+if TL_MLX5_ENABLED
+    gtest_SOURCES  += tl/mlx5/test_tl_mlx5.cc
+    gtest_LDADD    += $(IBVERBS_LIBADD) $(MLX5DV_LIBADD)
+endif
+
 if HAVE_CUDA
-gtest_SOURCES += \
-	core/test_mc_cuda.cc
+gtest_SOURCES +=                    \
+	core/test_mc_cuda.cc            \
+	core/test_ec_cuda.cc
 gtest_CPPFLAGS += \
 	$(CUDA_CPPFLAGS)
 gtest_LDFLAGS += \

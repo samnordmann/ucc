@@ -25,7 +25,6 @@ UCC_CLASS_INIT_FUNC(ucc_tl_mlx5_team_t, ucc_base_context_t *tl_context,
 
     self->a2a    = NULL;
     self->dm_ptr = NULL;
-
     if (ucc_topo_get_sbgp(UCC_TL_CORE_TEAM(self)->topo, UCC_SBGP_NODE)
             ->group_rank == 0) {
         /* MEMIC alloc, todo move to CTX and share on node*/
@@ -200,3 +199,45 @@ static ucc_mpool_ops_t ucc_tl_mlx5_dm_ops = {
     .chunk_release = ucc_tl_mlx5_dm_chunk_release,
     .obj_init      = ucc_tl_mlx5_dm_chunk_init,
     .obj_cleanup   = NULL};
+
+ucc_status_t ucc_tl_mlx5_team_get_scores(ucc_base_team_t *  tl_team,
+                                         ucc_coll_score_t **score_p)
+{
+    ucc_tl_mlx5_team_t *team = ucc_derived_of(tl_team, ucc_tl_mlx5_team_t);
+    ucc_base_context_t *ctx  = UCC_TL_TEAM_CTX(team);
+    ucc_base_lib_t *    lib  = UCC_TL_TEAM_LIB(team);
+    ucc_memory_type_t   mt   = UCC_MEMORY_TYPE_HOST;
+    ucc_coll_score_t *  score;
+    ucc_status_t        status;
+
+    status = ucc_coll_score_alloc(&score);
+    if (UCC_OK != status) {
+        tl_error(lib, "failed to alloc score_t");
+        return status;
+    }
+
+    if (strlen(ctx->score_str) > 0) {
+        status = ucc_coll_score_update_from_str(
+            ctx->score_str, score, UCC_TL_TEAM_SIZE(team), NULL, tl_team,
+            UCC_TL_MLX5_DEFAULT_SCORE, NULL, &mt, 1);
+
+        /* If INVALID_PARAM - User provided incorrect input - try to proceed */
+        if ((status < 0) && (status != UCC_ERR_INVALID_PARAM) &&
+            (status != UCC_ERR_NOT_SUPPORTED)) {
+            goto err;
+        }
+    }
+    *score_p = score;
+    return UCC_OK;
+err:
+    ucc_coll_score_free(score);
+    *score_p = NULL;
+    return status;
+}
+
+ucc_status_t ucc_tl_mlx5_coll_init(ucc_base_coll_args_t *coll_args,
+                                   ucc_base_team_t *     team,
+                                   ucc_coll_task_t **    task)
+{
+    return UCC_OK;
+}

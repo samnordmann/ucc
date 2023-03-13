@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2020-2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * Copyright (c) 2020-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * See file LICENSE for terms.
  */
@@ -19,15 +19,20 @@
 #include "reduce_scatterv/reduce_scatterv.h"
 #include "reduce/reduce.h"
 #include "gather/gather.h"
+#include "gatherv/gatherv.h"
 #include "fanout/fanout.h"
 #include "fanin/fanin.h"
+#include "scatterv/scatterv.h"
 
 ucc_status_t ucc_tl_ucp_get_lib_attr(const ucc_base_lib_t *lib,
                                      ucc_base_lib_attr_t  *base_attr);
+
+ucc_status_t ucc_tl_ucp_get_lib_properties(ucc_base_lib_properties_t *prop);
+
 ucc_status_t ucc_tl_ucp_get_context_attr(const ucc_base_context_t *context,
                                          ucc_base_ctx_attr_t      *base_attr);
 
-static ucc_config_field_t ucc_tl_ucp_lib_config_table[] = {
+ucc_config_field_t ucc_tl_ucp_lib_config_table[] = {
     {"", "", NULL, ucc_offsetof(ucc_tl_ucp_lib_config_t, super),
      UCC_CONFIG_TYPE_TABLE(ucc_tl_lib_config_table)},
 
@@ -42,6 +47,38 @@ static ucc_config_field_t ucc_tl_ucp_lib_config_table[] = {
      "pairwise algorithm",
      ucc_offsetof(ucc_tl_ucp_lib_config_t, alltoallv_pairwise_num_posts),
      UCC_CONFIG_TYPE_UINT},
+
+/* TODO: add radix to config once it's fully supported by the algorithm
+    {"ALLTOALLV_HYBRID_RADIX", "2",
+     "Radix of the Hybrid Alltoallv algorithm",
+     ucc_offsetof(ucc_tl_ucp_lib_config_t, alltoallv_hybrid_radix),
+     UCC_CONFIG_TYPE_UINT},
+*/
+    {"ALLTOALLV_HYBRID_NUM_SCRATCH_SENDS", "1",
+     "Number of send operations issued from scratch buffer per radix step",
+     ucc_offsetof(ucc_tl_ucp_lib_config_t, alltoallv_hybrid_num_scratch_sends),
+     UCC_CONFIG_TYPE_UINT},
+
+    {"ALLTOALLV_HYBRID_NUM_SCRATCH_RECVS", "3",
+     "Number of recv operations issued from scratch buffer per radix step",
+     ucc_offsetof(ucc_tl_ucp_lib_config_t, alltoallv_hybrid_num_scratch_recvs),
+     UCC_CONFIG_TYPE_UINT},
+
+    {"ALLTOALLV_HYBRID_PAIRWISE_NUM_POSTS", "3",
+     "The maximum number of pairwise messages to send before waiting for "
+     "completion",
+     ucc_offsetof(ucc_tl_ucp_lib_config_t, alltoallv_hybrid_pairwise_num_posts),
+     UCC_CONFIG_TYPE_UINT},
+
+    {"ALLTOALLV_HYBRID_BUFF_SIZE", "256k",
+     "Total size of scratch buffer, used for sends and receives",
+     ucc_offsetof(ucc_tl_ucp_lib_config_t, alltoallv_hybrid_buff_size),
+     UCC_CONFIG_TYPE_MEMUNITS},
+
+    {"ALLTOALLV_HYBRID_CHUNK_BYTE_LIMIT", "12k",
+     "Max size of data send in pairwise step of hybrid alltoallv algorithm",
+     ucc_offsetof(ucc_tl_ucp_lib_config_t, alltoallv_hybrid_chunk_byte_limit),
+     UCC_CONFIG_TYPE_MEMUNITS},
 
     {"KN_RADIX", "0",
      "Radix of all algorithms based on knomial pattern. When set to a "
@@ -62,44 +99,20 @@ static ucc_config_field_t ucc_tl_ucp_lib_config_table[] = {
      ucc_offsetof(ucc_tl_ucp_lib_config_t, fanout_kn_radix),
      UCC_CONFIG_TYPE_UINT},
 
-    {"ALLREDUCE_KN_RADIX", "4",
+    {"ALLREDUCE_KN_RADIX", "auto",
      "Radix of the recursive-knomial allreduce algorithm",
      ucc_offsetof(ucc_tl_ucp_lib_config_t, allreduce_kn_radix),
-     UCC_CONFIG_TYPE_UINT},
+     UCC_CONFIG_TYPE_UINT_RANGED},
 
-    {"ALLREDUCE_SRA_KN_RADIX", "4",
+    {"ALLREDUCE_SRA_KN_RADIX", "auto",
      "Radix of the scatter-reduce-allgather (SRA) knomial allreduce algorithm",
      ucc_offsetof(ucc_tl_ucp_lib_config_t, allreduce_sra_kn_radix),
-     UCC_CONFIG_TYPE_UINT},
+     UCC_CONFIG_TYPE_UINT_RANGED},
 
-    {"ALLREDUCE_SRA_KN_FRAG_THRESH", "inf",
-     "Threshold to enable fragmentation and pipelining of SRA Knomial "
-     "allreduce alg",
-     ucc_offsetof(ucc_tl_ucp_lib_config_t, allreduce_sra_kn_frag_thresh),
-     UCC_CONFIG_TYPE_MEMUNITS},
-
-    {"ALLREDUCE_SRA_KN_FRAG_SIZE", "inf",
-     "Maximum allowed fragment size of SRA knomial alg",
-     ucc_offsetof(ucc_tl_ucp_lib_config_t, allreduce_sra_kn_frag_size),
-     UCC_CONFIG_TYPE_MEMUNITS},
-
-    {"ALLREDUCE_SRA_KN_N_FRAGS", "2",
-     "Number of fragments each allreduce is split into when SRA knomial alg is "
-     "used\n"
-     "The actual number of fragments can be larger if fragment size exceeds\n"
-     "ALLREDUCE_SRA_KN_FRAG_SIZE",
-     ucc_offsetof(ucc_tl_ucp_lib_config_t, allreduce_sra_kn_n_frags),
-     UCC_CONFIG_TYPE_UINT},
-
-    {"ALLREDUCE_SRA_KN_PIPELINE_DEPTH", "2",
-     "Number of fragments simultaneously progressed by the SRA knomial alg",
-     ucc_offsetof(ucc_tl_ucp_lib_config_t, allreduce_sra_kn_pipeline_depth),
-     UCC_CONFIG_TYPE_UINT},
-
-    {"ALLREDUCE_SRA_KN_SEQUENTIAL", "n",
-     "Type of pipelined schedule for SRA knomial alg (sequential/parallel)",
-     ucc_offsetof(ucc_tl_ucp_lib_config_t, allreduce_sra_kn_seq),
-     UCC_CONFIG_TYPE_BOOL},
+    {"ALLREDUCE_SRA_KN_PIPELINE", "n",
+     "Pipelining settings for SRA Knomial allreduce algorithm",
+     ucc_offsetof(ucc_tl_ucp_lib_config_t, allreduce_sra_kn_pipeline),
+     UCC_CONFIG_TYPE_PIPELINE_PARAMS},
 
     {"REDUCE_SCATTER_KN_RADIX", "4",
      "Radix of the knomial reduce-scatter algorithm",
@@ -127,8 +140,20 @@ static ucc_config_field_t ucc_tl_ucp_lib_config_table[] = {
      ucc_offsetof(ucc_tl_ucp_lib_config_t, gather_kn_radix),
      UCC_CONFIG_TYPE_UINT},
 
+    {"GATHERV_LINEAR_NUM_POSTS", "0",
+     "Maximum number of outstanding send and receive messages in gatherv "
+     "linear algorithm",
+     ucc_offsetof(ucc_tl_ucp_lib_config_t, gatherv_linear_num_posts),
+     UCC_CONFIG_TYPE_UINT},
+
     {"SCATTER_KN_RADIX", "4", "Radix of the knomial scatter algorithm",
      ucc_offsetof(ucc_tl_ucp_lib_config_t, scatter_kn_radix),
+     UCC_CONFIG_TYPE_UINT},
+
+    {"SCATTERV_LINEAR_NUM_POSTS", "16",
+     "Maximum number of outstanding send and receive messages in scatterv "
+     "linear algorithm",
+     ucc_offsetof(ucc_tl_ucp_lib_config_t, scatterv_linear_num_posts),
      UCC_CONFIG_TYPE_UINT},
 
     {"REDUCE_AVG_PRE_OP", "1",
@@ -148,6 +173,10 @@ static ucc_config_field_t ucc_tl_ucp_lib_config_table[] = {
      "algorithm",
      ucc_offsetof(ucc_tl_ucp_lib_config_t, reduce_scatterv_ring_bidirectional),
      UCC_CONFIG_TYPE_BOOL},
+
+    {"USE_TOPO", "try", "allow usage of tl ucp topo",
+     ucc_offsetof(ucc_tl_ucp_lib_config_t, use_topo),
+     UCC_CONFIG_TYPE_TERNARY},
 
     {NULL}};
 
@@ -173,6 +202,20 @@ static ucs_config_field_t ucc_tl_ucp_context_config_table[] = {
 
     {"PRE_REG_MEM", "0", "Pre Register collective memory region with UCX",
      ucc_offsetof(ucc_tl_ucp_context_config_t, pre_reg_mem),
+     UCC_CONFIG_TYPE_UINT},
+
+    {"SERVICE_WORKER", "n",
+     "If set to 0, uses the same worker for collectives and "
+     "service. If not, creates a special worker for service collectives "
+     "for which UCX_TL and UCX_NET_DEVICES are configured by the variables "
+     "UCC_TL_UCP_SERVICE_TLS and UCC_TL_UCP_SERVICE_NET_DEVICES respectively",
+     ucc_offsetof(ucc_tl_ucp_context_config_t, service_worker),
+     UCC_CONFIG_TYPE_BOOL},
+
+    {"SERVICE_THROTTLING_THRESH", "100",
+     "Number of call to ucc_context_progress function between two consecutive "
+     "calls to service worker progress function",
+     ucc_offsetof(ucc_tl_ucp_context_config_t, service_throttling_thresh),
      UCC_CONFIG_TYPE_UINT},
 
     {NULL}};
@@ -231,7 +274,7 @@ ucc_status_t ucc_tl_ucp_team_get_scores(ucc_base_team_t   *tl_team,
 
 UCC_TL_IFACE_DECLARE(ucp, UCP);
 
-ucs_memory_type_t ucc_memtype_to_ucs[UCC_MEMORY_TYPE_LAST+1] = {
+ucs_memory_type_t ucc_memtype_to_ucs[UCC_MEMORY_TYPE_LAST + 1] = {
     [UCC_MEMORY_TYPE_HOST]         = UCS_MEMORY_TYPE_HOST,
     [UCC_MEMORY_TYPE_CUDA]         = UCS_MEMORY_TYPE_CUDA,
     [UCC_MEMORY_TYPE_CUDA_MANAGED] = UCS_MEMORY_TYPE_CUDA_MANAGED,
@@ -274,37 +317,41 @@ UCC_TL_UCP_PROFILE_FUNC_VOID(ucc_tl_ucp_pre_register_mem, (team, addr, length,
 
 __attribute__((constructor)) static void tl_ucp_iface_init(void)
 {
-    ucc_tl_ucp.super.scoll.allreduce = ucc_tl_ucp_service_allreduce;
     ucc_tl_ucp.super.scoll.allgather = ucc_tl_ucp_service_allgather;
+    ucc_tl_ucp.super.scoll.allreduce = ucc_tl_ucp_service_allreduce;
     ucc_tl_ucp.super.scoll.bcast     = ucc_tl_ucp_service_bcast;
     ucc_tl_ucp.super.scoll.update_id = ucc_tl_ucp_service_update_id;
 
-    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_ALLREDUCE)] =
-        ucc_tl_ucp_allreduce_algs;
-    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_BCAST)] =
-        ucc_tl_ucp_bcast_algs;
-    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_BARRIER)] =
-        ucc_tl_ucp_barrier_algs;
-    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_ALLTOALL)] =
-        ucc_tl_ucp_alltoall_algs;
-    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_ALLTOALLV)] =
-        ucc_tl_ucp_alltoallv_algs;
-    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_REDUCE_SCATTER)] =
-        ucc_tl_ucp_reduce_scatter_algs;
-    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_REDUCE_SCATTERV)] =
-        ucc_tl_ucp_reduce_scatterv_algs;
-    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_REDUCE)] =
-        ucc_tl_ucp_reduce_algs;
-    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_GATHER)] =
-        ucc_tl_ucp_gather_algs;
-    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_FANIN)] =
-        ucc_tl_ucp_fanin_algs;
-    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_FANOUT)] =
-        ucc_tl_ucp_fanout_algs;
     ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_ALLGATHER)] =
         ucc_tl_ucp_allgather_algs;
     ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_ALLGATHERV)] =
         ucc_tl_ucp_allgatherv_algs;
+    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_ALLREDUCE)] =
+        ucc_tl_ucp_allreduce_algs;
+    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_ALLTOALL)] =
+        ucc_tl_ucp_alltoall_algs;
+    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_ALLTOALLV)] =
+        ucc_tl_ucp_alltoallv_algs;
+    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_BARRIER)] =
+        ucc_tl_ucp_barrier_algs;
+    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_BCAST)] =
+        ucc_tl_ucp_bcast_algs;
+    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_FANIN)] =
+        ucc_tl_ucp_fanin_algs;
+    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_FANOUT)] =
+        ucc_tl_ucp_fanout_algs;
+    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_GATHER)] =
+        ucc_tl_ucp_gather_algs;
+    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_GATHERV)] =
+        ucc_tl_ucp_gatherv_algs;
+    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_REDUCE)] =
+        ucc_tl_ucp_reduce_algs;
+    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_REDUCE_SCATTER)] =
+        ucc_tl_ucp_reduce_scatter_algs;
+    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_REDUCE_SCATTERV)] =
+        ucc_tl_ucp_reduce_scatterv_algs;
+    ucc_tl_ucp.super.alg_info[ucc_ilog2(UCC_COLL_TYPE_SCATTERV)] =
+        ucc_tl_ucp_scatterv_algs;
 
     /* no need to check return value, plugins can be absent */
     (void)ucc_components_load("tlcp_ucp", &ucc_tl_ucp.super.coll_plugins);

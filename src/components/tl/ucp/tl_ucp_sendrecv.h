@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * Copyright (c) 2021-2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * Copyright (c) Meta Platforms, Inc. and affiliates. 2022.
  *
  * See file LICENSE for terms.
@@ -56,10 +56,10 @@ void ucc_tl_ucp_recv_completion_cb(void *request, ucs_status_t status,
         if (ucc_unlikely(UCS_PTR_IS_ERR(ucp_status))) {                        \
             tl_error(UCC_TL_TEAM_LIB(team),                                    \
                      "tag %u; dest %d; team_id %u; errmsg %s",                 \
-                     task->tagged.tag,                                         \
-                     dest_group_rank, team->super.super.params.id,             \
+                     task->tagged.tag, dest_group_rank,                        \
+                     team->super.super.params.id,                              \
                      ucs_status_string(UCS_PTR_STATUS(ucp_status)));           \
-            ucp_request_cancel(UCC_TL_UCP_WORKER(team), ucp_status);           \
+            ucp_request_cancel(team->worker->ucp_worker, ucp_status);          \
             ucp_request_free(ucp_status);                                      \
             return ucs_status_to_ucc_status(UCS_PTR_STATUS(ucp_status));       \
         }                                                                      \
@@ -68,7 +68,7 @@ void ucc_tl_ucp_recv_completion_cb(void *request, ucs_status_t status,
 static inline ucs_status_ptr_t
 ucc_tl_ucp_send_common(void *buffer, size_t msglen, ucc_memory_type_t mtype,
                        ucc_rank_t dest_group_rank, ucc_tl_ucp_team_t *team,
-                       ucc_tl_ucp_task_t *task, ucp_send_nbx_callback_t cb)
+                       ucc_tl_ucp_task_t *task, ucp_send_nbx_callback_t cb, void *user_data)
 {
     ucc_coll_args_t    *args = &TASK_ARGS(task);
     ucp_request_param_t req_param;
@@ -89,7 +89,7 @@ ucc_tl_ucp_send_common(void *buffer, size_t msglen, ucc_memory_type_t mtype,
     req_param.datatype    = ucp_dt_make_contig(msglen);
     req_param.cb.send     = cb;
     req_param.memory_type = ucc_memtype_to_ucs[mtype];
-    req_param.user_data   = (void *)task;
+    req_param.user_data   = user_data;
     task->tagged.send_posted++;
     return ucp_tag_send_nbx(ep, buffer, 1, ucp_tag, &req_param);
 }
@@ -102,7 +102,8 @@ ucc_tl_ucp_send_nb(void *buffer, size_t msglen, ucc_memory_type_t mtype,
     ucs_status_ptr_t ucp_status;
 
     ucp_status = ucc_tl_ucp_send_common(buffer, msglen, mtype, dest_group_rank,
-                                        team, task, ucc_tl_ucp_send_completion_cb);
+                                        team, task, ucc_tl_ucp_send_completion_cb,
+                                        (void *)task);
     if (UCS_OK != ucp_status) {
         UCC_TL_UCP_CHECK_REQ_STATUS();
     } else {
@@ -114,16 +115,16 @@ ucc_tl_ucp_send_nb(void *buffer, size_t msglen, ucc_memory_type_t mtype,
 static inline ucc_status_t
 ucc_tl_ucp_send_cb(void *buffer, size_t msglen, ucc_memory_type_t mtype,
                    ucc_rank_t dest_group_rank, ucc_tl_ucp_team_t *team,
-                   ucc_tl_ucp_task_t *task, ucp_send_nbx_callback_t cb)
+                   ucc_tl_ucp_task_t *task, ucp_send_nbx_callback_t cb, void *user_data)
 {
     ucs_status_ptr_t ucp_status;
 
     ucp_status = ucc_tl_ucp_send_common(buffer, msglen, mtype, dest_group_rank,
-                                     team, task, cb);
+                                        team, task, cb, user_data);
     if (UCS_OK != ucp_status) {
         UCC_TL_UCP_CHECK_REQ_STATUS();
     } else {
-        cb(NULL, UCS_OK, (void*)task);
+        cb(NULL, UCS_OK, user_data);
     }
     return UCC_OK;
 }
@@ -131,7 +132,7 @@ ucc_tl_ucp_send_cb(void *buffer, size_t msglen, ucc_memory_type_t mtype,
 static inline ucs_status_ptr_t
 ucc_tl_ucp_recv_common(void *buffer, size_t msglen, ucc_memory_type_t mtype,
                        ucc_rank_t dest_group_rank, ucc_tl_ucp_team_t *team,
-                       ucc_tl_ucp_task_t *task, ucp_tag_recv_nbx_callback_t cb)
+                       ucc_tl_ucp_task_t *task, ucp_tag_recv_nbx_callback_t cb, void *user_data)
 {
     ucc_coll_args_t    *args = &TASK_ARGS(task);
     ucp_request_param_t req_param;
@@ -150,9 +151,9 @@ ucc_tl_ucp_recv_common(void *buffer, size_t msglen, ucc_memory_type_t mtype,
     req_param.datatype    = ucp_dt_make_contig(msglen);
     req_param.cb.recv     = cb;
     req_param.memory_type = ucc_memtype_to_ucs[mtype];
-    req_param.user_data   = (void *)task;
+    req_param.user_data   = user_data;
     task->tagged.recv_posted++;
-    return ucp_tag_recv_nbx(UCC_TL_UCP_WORKER(team), buffer, 1, ucp_tag,
+    return ucp_tag_recv_nbx(team->worker->ucp_worker, buffer, 1, ucp_tag,
                             ucp_tag_mask, &req_param);
 }
 
@@ -164,7 +165,8 @@ ucc_tl_ucp_recv_nb(void *buffer, size_t msglen, ucc_memory_type_t mtype,
     ucs_status_ptr_t ucp_status;
 
     ucp_status = ucc_tl_ucp_recv_common(buffer, msglen, mtype, dest_group_rank,
-                                        team, task, ucc_tl_ucp_recv_completion_cb);
+                                        team, task, ucc_tl_ucp_recv_completion_cb,
+                                        (void *)task);
     if (UCS_OK != ucp_status) {
         UCC_TL_UCP_CHECK_REQ_STATUS();
     } else {
@@ -177,16 +179,16 @@ ucc_tl_ucp_recv_nb(void *buffer, size_t msglen, ucc_memory_type_t mtype,
 static inline ucc_status_t
 ucc_tl_ucp_recv_cb(void *buffer, size_t msglen, ucc_memory_type_t mtype,
                    ucc_rank_t dest_group_rank, ucc_tl_ucp_team_t *team,
-                   ucc_tl_ucp_task_t *task, ucp_tag_recv_nbx_callback_t cb)
+                   ucc_tl_ucp_task_t *task, ucp_tag_recv_nbx_callback_t cb, void *user_data)
 {
     ucs_status_ptr_t ucp_status;
 
     ucp_status = ucc_tl_ucp_recv_common(buffer, msglen, mtype, dest_group_rank,
-                                        team, task, cb);
+                                        team, task, cb, user_data);
     if (UCS_OK != ucp_status) {
         UCC_TL_UCP_CHECK_REQ_STATUS();
     } else {
-        cb(NULL, UCS_OK, NULL, (void*)task);
+        cb(NULL, UCS_OK, NULL, user_data);
     }
     return UCC_OK;
 }
@@ -240,13 +242,13 @@ ucc_tl_ucp_resolve_p2p_by_va(ucc_tl_ucp_team_t *team, void *va, ucp_ep_h *ep,
 
     *segment  = -1;
     core_rank = ucc_ep_map_eval(UCC_TL_TEAM_MAP(team), peer);
-    ucc_assert(UCC_TL_CORE_TEAM(team));
+    ucc_assert(UCC_TL_CORE_TEAM(team) != NULL);
     peer = ucc_get_ctx_rank(UCC_TL_CORE_TEAM(team), core_rank);
 
     offset = ucc_get_team_ep_addr(UCC_TL_CORE_CTX(team), UCC_TL_CORE_TEAM(team),
                                   core_rank, ucc_tl_ucp.super.super.id);
 
-    base_offset = (ptrdiff_t)TL_UCP_EP_ADDR_ONESIDED_INFO(offset);
+    base_offset = (ptrdiff_t)(TL_UCP_EP_ADDR_ONESIDED_INFO(offset, ctx));
     rvas        = (uint64_t *)base_offset;
     key_sizes   = PTR_OFFSET(base_offset, (section_offset * 2));
     keys        = PTR_OFFSET(base_offset, (section_offset * 3));
@@ -282,8 +284,7 @@ static inline ucc_status_t ucc_tl_ucp_flush(ucc_tl_ucp_team_t *team)
     ucp_request_param_t req_param = {0};
     ucs_status_ptr_t    req;
 
-    req =
-        ucp_worker_flush_nbx(UCC_TL_UCP_TEAM_CTX(team)->ucp_worker, &req_param);
+    req = ucp_worker_flush_nbx(team->worker->ucp_worker, &req_param);
     if (UCS_OK != req) {
         if (UCS_PTR_IS_ERR(req)) {
             return ucs_status_to_ucc_status(UCS_PTR_STATUS(req));

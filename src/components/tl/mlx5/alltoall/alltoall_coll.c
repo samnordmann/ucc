@@ -861,11 +861,11 @@ UCC_TL_MLX5_PROFILE_FUNC(ucc_status_t, ucc_tl_mlx5_alltoall_init,
     }
 
     ucc_schedule_add_task(schedule, tasks[0]);
-    ucc_event_manager_subscribe(&schedule->super.em, UCC_EVENT_SCHEDULE_STARTED,
+    ucc_event_manager_subscribe(&schedule->super, UCC_EVENT_SCHEDULE_STARTED,
                                 tasks[0], ucc_task_start_handler);
     for (i = 0; i < (n_tasks - 1); i++) {
         ucc_schedule_add_task(schedule, tasks[i + 1]);
-        ucc_event_manager_subscribe(&tasks[i]->em, UCC_EVENT_COMPLETED,
+        ucc_event_manager_subscribe(tasks[i], UCC_EVENT_COMPLETED,
                                     tasks[i + 1], ucc_task_start_handler);
     }
 
@@ -899,63 +899,4 @@ UCC_TL_MLX5_PROFILE_FUNC(ucc_status_t, ucc_tl_mlx5_alltoall_init,
 put_schedule:
     ucc_tl_mlx5_put_schedule(task);
     return status;
-}
-
-ucc_status_t ucc_tl_mlx5_team_get_scores(ucc_base_team_t *  tl_team,
-                                         ucc_coll_score_t **score_p)
-{
-    ucc_tl_mlx5_team_t *team = ucc_derived_of(tl_team, ucc_tl_mlx5_team_t);
-    ucc_base_context_t *ctx  = UCC_TL_TEAM_CTX(team);
-    ucc_base_lib_t *    lib  = UCC_TL_TEAM_LIB(team);
-    ucc_coll_score_t *  score;
-    ucc_status_t        status;
-
-    status = ucc_coll_score_alloc(&score);
-    if (UCC_OK != status) {
-        tl_error(lib, "failed to alloc score_t");
-        return status;
-    }
-
-    status = ucc_coll_score_add_range(
-        score, UCC_COLL_TYPE_ALLTOALL, UCC_MEMORY_TYPE_HOST, 0,
-        MAX_MSG_SIZE * UCC_TL_TEAM_SIZE(team), UCC_TL_MLX5_DEFAULT_SCORE,
-        ucc_tl_mlx5_alltoall_init, tl_team);
-    if (UCC_OK != status) {
-        tl_error(lib, "faild to add range to score_t");
-        return status;
-    }
-
-    status = ucc_coll_score_add_range(
-        score, UCC_COLL_TYPE_ALLTOALL, UCC_MEMORY_TYPE_CUDA, 0,
-        MAX_MSG_SIZE * UCC_TL_TEAM_SIZE(team), UCC_TL_MLX5_DEFAULT_SCORE,
-        ucc_tl_mlx5_alltoall_init, tl_team);
-    if (UCC_OK != status) {
-        tl_error(lib, "faild to add range to score_t");
-        return status;
-    }
-
-    if (strlen(ctx->score_str) > 0) {
-        status = ucc_coll_score_update_from_str(
-            ctx->score_str, score, UCC_TL_TEAM_SIZE(team), NULL, tl_team,
-            UCC_TL_MLX5_DEFAULT_SCORE, NULL);
-
-        /* If INVALID_PARAM - User provided incorrect input - try to proceed */
-        if ((status < 0) && (status != UCC_ERR_INVALID_PARAM) &&
-            (status != UCC_ERR_NOT_SUPPORTED)) {
-            goto err;
-        }
-    }
-    *score_p = score;
-    return UCC_OK;
-err:
-    ucc_coll_score_free(score);
-    *score_p = NULL;
-    return status;
-}
-
-ucc_status_t ucc_tl_mlx5_coll_init(ucc_base_coll_args_t *coll_args,
-                                   ucc_base_team_t *     team,
-                                   ucc_coll_task_t **    task)
-{
-    return UCC_OK;
 }

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2022.  ALL RIGHTS RESERVED.
+ * Copyright (c) 2022-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * See file LICENSE for terms.
  */
@@ -10,7 +10,7 @@ ucc_status_t ucc_tl_mlx5_get_lib_attr(const ucc_base_lib_t *lib,
                                       ucc_base_lib_attr_t * base_attr);
 ucc_status_t ucc_tl_mlx5_get_context_attr(const ucc_base_context_t *context,
                                           ucc_base_ctx_attr_t *     base_attr);
-
+ucc_status_t ucc_tl_mlx5_get_lib_properties(ucc_base_lib_properties_t *prop);
 static ucc_config_field_t ucc_tl_mlx5_lib_config_table[] = {
     {"", "", NULL, ucc_offsetof(ucc_tl_mlx5_lib_config_t, super),
      UCC_CONFIG_TYPE_TABLE(ucc_tl_lib_config_table)},
@@ -24,7 +24,7 @@ static ucc_config_field_t ucc_tl_mlx5_lib_config_table[] = {
 
     {"DM_BUF_NUM", "auto", "Number of DM buffers to alloc",
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, dm_buf_num),
-     UCC_CONFIG_TYPE_MEMUNITS},
+     UCC_CONFIG_TYPE_ULUNITS},
 
     {"BLOCK_SIZE", "0",
      "Size of the blocks that are sent using blocked AlltoAll Algorithm",
@@ -40,10 +40,30 @@ static ucc_config_field_t ucc_tl_mlx5_lib_config_table[] = {
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, dc_threshold),
      UCC_CONFIG_TYPE_UINT},
 
-    {"DM_HOST", "0",
+    {"DM_HOST", "n",
      "Use host registered memory instead of DM for "
      "transpose staging",
-     ucc_offsetof(ucc_tl_mlx5_lib_config_t, dm_host), UCC_CONFIG_TYPE_UINT},
+     ucc_offsetof(ucc_tl_mlx5_lib_config_t, dm_host), UCC_CONFIG_TYPE_BOOL},
+
+    {"QP_RNR_RETRY", "7", "IB QP rnr retry count",
+     ucc_offsetof(ucc_tl_mlx5_lib_config_t, qp_conf.qp_rnr_retry),
+     UCC_CONFIG_TYPE_UINT},
+
+    {"QP_RNR_TIMER", "20", "IB QP rnr timer",
+     ucc_offsetof(ucc_tl_mlx5_lib_config_t, qp_conf.qp_rnr_timer),
+     UCC_CONFIG_TYPE_UINT},
+
+    {"QP_RETRY_COUNT", "7", "IB QP retry count",
+     ucc_offsetof(ucc_tl_mlx5_lib_config_t, qp_conf.qp_retry_cnt),
+     UCC_CONFIG_TYPE_UINT},
+
+    {"QP_TIMEOUT", "18", "IB QP timeout",
+     ucc_offsetof(ucc_tl_mlx5_lib_config_t, qp_conf.qp_timeout),
+     UCC_CONFIG_TYPE_UINT},
+
+    {"QP_MAX_ATOMIC", "1", "max num of outstanding atomics in IB QP",
+     ucc_offsetof(ucc_tl_mlx5_lib_config_t, qp_conf.qp_max_atomic),
+     UCC_CONFIG_TYPE_UINT},
 
     {NULL}};
 

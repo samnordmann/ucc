@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * Copyright (c) 2022-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * See file LICENSE for terms.
  */
@@ -127,6 +127,12 @@ static ucc_status_t ucc_cl_hier_allreduce_split_rail_frag_init(
     }
 
     node_size   = cl_team->sbgps[UCC_HIER_SBGP_NODE].sbgp->group_size;
+    if (ucc_unlikely(0 == node_size)) {
+        /* this check is only needed to suppress clang-tidy linter which
+           assumes potential devision-by-zero when node_size is passed to
+           ucc_buffer_block_count */
+        goto err_rs;
+    }
     node_rank   = cl_team->sbgps[UCC_HIER_SBGP_NODE].sbgp->group_rank;
     total_count = coll_args->args.dst.info.count;
 
@@ -158,8 +164,9 @@ static ucc_status_t ucc_cl_hier_allreduce_split_rail_frag_init(
     rs_args.args.dst.info_v.counts   = counts;
     rs_args.args.dst.info_v.mem_type = coll_args->args.dst.info.mem_type;
     rs_args.args.dst.info_v.datatype = coll_args->args.dst.info.datatype;
+    /* linter thinks node_size can be 0 - false positive */
     rs_args.max_frag_count = ucc_buffer_block_count(
-        ucc_buffer_block_count(total_count, n_frags, 0), node_size, 0);
+        ucc_buffer_block_count(total_count, n_frags, 0), node_size, 0); //NOLINT
     rs_args.mask |= UCC_BASE_CARGS_MAX_FRAG_COUNT;
 
 
@@ -216,20 +223,20 @@ static ucc_status_t ucc_cl_hier_allreduce_split_rail_frag_init(
         goto err_ag;
     }
 
-    task_rs->n_deps = 1;
-    ucc_schedule_add_task(schedule, task_rs);
-    ucc_event_manager_subscribe(&schedule->super.em, UCC_EVENT_SCHEDULE_STARTED,
-                                task_rs, ucc_dependency_handler);
+    UCC_CHECK_GOTO(ucc_schedule_add_task(schedule, task_rs), err_ag, status);
+    UCC_CHECK_GOTO(ucc_task_subscribe_dep(&schedule->super, task_rs,
+                                          UCC_EVENT_SCHEDULE_STARTED),
+                   err_ag, status);
 
-    task_ar->n_deps = 1;
-    ucc_schedule_add_task(schedule, task_ar);
-    ucc_event_manager_subscribe(&task_rs->em, UCC_EVENT_COMPLETED, task_ar,
-                                ucc_dependency_handler);
+    UCC_CHECK_GOTO(ucc_schedule_add_task(schedule, task_ar), err_ag, status);
+    UCC_CHECK_GOTO(ucc_task_subscribe_dep(task_rs, task_ar,
+                                          UCC_EVENT_COMPLETED),
+                   err_ag, status);
 
-    task_ag->n_deps = 1;
-    ucc_schedule_add_task(schedule, task_ag);
-    ucc_event_manager_subscribe(&task_ar->em, UCC_EVENT_COMPLETED, task_ag,
-                                ucc_dependency_handler);
+    UCC_CHECK_GOTO(ucc_schedule_add_task(schedule, task_ag), err_ag, status);
+    UCC_CHECK_GOTO(ucc_task_subscribe_dep(task_ar, task_ag,
+                                          UCC_EVENT_COMPLETED),
+                   err_ag, status);
 
     schedule->super.post     = ucc_schedule_start;
     schedule->super.progress = NULL;
@@ -251,31 +258,13 @@ err_rs:
     return status;
 }
 
-static inline void get_n_frags(ucc_base_coll_args_t *coll_args,
-                               ucc_cl_hier_team_t *team, int *n_frags,
-                               int *pipeline_depth)
-{
-    ucc_cl_hier_lib_config_t *cfg     = &UCC_CL_HIER_TEAM_LIB(team)->cfg;
-    size_t                    msgsize = coll_args->args.dst.info.count *
-                     ucc_dt_size(coll_args->args.dst.info.datatype);
-    int min_num_frags;
-
-    *n_frags = 1;
-    if (msgsize > cfg->allreduce_split_rail_frag_thresh) {
-        min_num_frags = msgsize / cfg->allreduce_split_rail_frag_size;
-        *n_frags = ucc_max(min_num_frags, cfg->allreduce_split_rail_n_frags);
-    }
-    *pipeline_depth =
-        ucc_min(*n_frags, cfg->allreduce_split_rail_pipeline_depth);
-}
-
 static ucc_status_t
 ucc_cl_hier_split_rail_allreduce_start(ucc_coll_task_t *task)
 {
     ucc_schedule_pipelined_t *schedule =
         ucc_derived_of(task, ucc_schedule_pipelined_t);
 
-    cl_info(task->team->context->lib,
+    cl_debug(task->team->context->lib,
             "posting split_rail ar, sbuf %p, rbuf %p, count %zd, dt %s, op %s, "
             "inplace %d, pdepth %d, frags_total %d",
             task->bargs.args.src.info.buffer, task->bargs.args.dst.info.buffer,
@@ -318,12 +307,15 @@ UCC_CL_HIER_PROFILE_FUNC(ucc_status_t, ucc_cl_hier_allreduce_split_rail_init,
         return UCC_ERR_NO_MEMORY;
     }
 
-    get_n_frags(coll_args, cl_team, &n_frags, &pipeline_depth);
+    ucc_pipeline_nfrags_pdepth(&cfg->allreduce_split_rail_pipeline,
+                               coll_args->args.dst.info.count *
+                               ucc_dt_size(coll_args->args.dst.info.datatype),
+                               &n_frags, &pipeline_depth);
 
     status = ucc_schedule_pipelined_init(
         coll_args, team, ucc_cl_hier_allreduce_split_rail_frag_init,
         ucc_cl_hier_allreduce_split_rail_frag_setup, pipeline_depth, n_frags,
-        cfg->allreduce_split_rail_seq, &schedule->super);
+        cfg->allreduce_split_rail_pipeline.order, &schedule->super);
 
     if (ucc_unlikely(status != UCC_OK)) {
         cl_error(team->context->lib,

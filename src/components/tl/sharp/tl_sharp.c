@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2021, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * Copyright (c) 2021-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * See file LICENSE for terms.
  */
@@ -9,6 +9,8 @@
 
 ucc_status_t ucc_tl_sharp_get_lib_attr(const ucc_base_lib_t *lib,
                                        ucc_base_lib_attr_t *base_attr);
+
+ucc_status_t ucc_tl_sharp_get_lib_properties(ucc_base_lib_properties_t *prop);
 
 ucc_status_t ucc_tl_sharp_get_context_attr(const ucc_base_context_t *context,
                                            ucc_base_ctx_attr_t *base_attr);
@@ -48,6 +50,11 @@ static ucc_config_field_t ucc_tl_sharp_context_config_table[] = {
      ucc_offsetof(ucc_tl_sharp_context_config_t, uprogress_num_polls),
      UCC_CONFIG_TYPE_UINT},
 
+    {"CONTEXT_PER_TEAM", "n",
+     "Create SHARP context/tree per team",
+     ucc_offsetof(ucc_tl_sharp_context_config_t, context_per_team),
+     UCC_CONFIG_TYPE_BOOL},
+
     {"RAND_SEED", "0",
      "Seed for random sharp job ID. (0 - use default).",
      ucc_offsetof(ucc_tl_sharp_context_config_t, rand_seed),
@@ -83,6 +90,25 @@ ucc_status_t ucc_tl_sharp_team_get_scores(ucc_base_team_t   *tl_team,
 UCC_TL_IFACE_DECLARE(sharp, SHARP);
 
 ucc_status_t ucc_tl_sharp_context_create_epilog(ucc_base_context_t *context);
+
+ucc_status_t sharp_status_to_ucc_status(int status)
+{
+    switch (status) {
+    case SHARP_COLL_SUCCESS:
+        return UCC_OK;
+    case SHARP_COLL_ENOMEM:
+        return UCC_ERR_NO_MEMORY;
+    case SHARP_COLL_ENOT_SUPP:
+        return UCC_ERR_NOT_SUPPORTED;
+    case SHARP_COLL_EINVAL:
+        return UCC_ERR_INVALID_PARAM;
+    case SHARP_COLL_ENO_RESOURCE:
+        return UCC_ERR_NO_RESOURCE;
+    default:
+        break;
+    }
+    return UCC_ERR_NO_MESSAGE;
+}
 
 __attribute__((constructor)) static void tl_sharp_iface_init(void)
 {

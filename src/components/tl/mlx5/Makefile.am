@@ -1,5 +1,5 @@
 #
-# Copyright (C) Mellanox Technologies Ltd. 2022.  ALL RIGHTS RESERVED.
+# Copyright (c) 2022, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 #
 
 if TL_MLX5_ENABLED
@@ -33,7 +33,7 @@ libucc_tl_mlx5_la_SOURCES  = $(sources)
 libucc_tl_mlx5_la_CPPFLAGS = $(AM_CPPFLAGS) $(BASE_CPPFLAGS)
 libucc_tl_mlx5_la_CFLAGS   = $(BASE_CFLAGS)
 libucc_tl_mlx5_la_LDFLAGS  = -version-info $(SOVERSION) --as-needed
-libucc_tl_mlx5_la_LIBADD   = $(UCC_TOP_BUILDDIR)/src/libucc.la -libverbs -lmlx5
+libucc_tl_mlx5_la_LIBADD   = $(UCC_TOP_BUILDDIR)/src/libucc.la $(IBVERBS_LIBADD) $(MLX5DV_LIBADD)
 
 include $(top_srcdir)/config/module.am
 
