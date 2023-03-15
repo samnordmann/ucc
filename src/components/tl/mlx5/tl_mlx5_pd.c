@@ -13,7 +13,7 @@ typedef struct {
     ucc_status_t return_val;
 } connection_t;
 
-void *do_sendmsg(void *ptr)
+void do_sendmsg(void *ptr)
 {
     connection_t *  conn = (connection_t *)ptr;
     struct msghdr   msg  = {};
@@ -51,7 +51,6 @@ void *do_sendmsg(void *ptr)
 
     //    tl_debug("sendmsg: nbytes=%u", (int)nbytes);
     conn->return_val = UCC_OK;
-    pthread_exit(NULL);
 }
 
 static ucc_status_t do_recvmsg(int sock, int *shared_cmd_fd,
@@ -180,7 +179,6 @@ static ucc_status_t server_send_data(int command_fd, uint32_t pd_handle,
 {
     int                i = 0;
     connection_t       connection[group_size];
-    pthread_t          thread[group_size];
     struct sockaddr_un addr;
     socklen_t          addrlen;
 
@@ -191,13 +189,9 @@ static ucc_status_t server_send_data(int command_fd, uint32_t pd_handle,
         connection[i].pd_handle = pd_handle;
         if (connection[i].sock != -1) {
             /* start a new thread but do not wait for it */
-            pthread_create(&thread[i], 0, do_sendmsg, (void *)&connection[i]);
+            do_sendmsg((void *)&connection[i]);
             i++;
         }
-    }
-
-    for (i = 0; i < group_size; i++) {
-        pthread_join(thread[i], NULL);
     }
 
     addrlen = sizeof(addr);
