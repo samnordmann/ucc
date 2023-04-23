@@ -63,6 +63,7 @@ typedef struct ucc_tl_mlx5_lib_config {
 typedef struct ucc_tl_mlx5_context_config {
     ucc_tl_context_config_t  super;
     ucs_config_names_array_t devices;
+    int                      npolls;
 } ucc_tl_mlx5_context_config_t;
 
 typedef struct ucc_tl_mlx5_lib {
