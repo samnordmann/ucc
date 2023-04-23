@@ -71,11 +71,11 @@ static ucc_status_t ucc_tl_mlx5_node_fanin(ucc_tl_mlx5_team_t *    team,
         ucc_tl_mlx5_get_my_ctrl(a2a, seq_index)->seq_num =
             task->alltoall.seq_num;
     } else {
-        for (i = 0; i < a2a->node.sbgp->group_size; i++) {
-            if (i == a2a->node.sbgp->group_rank) {
+        for (; a2a->node.fanin_index < a2a->node.sbgp->group_size; a2a->node.fanin_index++) {
+            if (a2a->node.fanin_index == a2a->node.sbgp->group_rank) {
                 continue;
             }
-            ctrl_v = ucc_tl_mlx5_get_ctrl(a2a, seq_index, i);
+            ctrl_v = ucc_tl_mlx5_get_ctrl(a2a, seq_index, a2a->node.fanin_index);
             if (ctrl_v->seq_num != task->alltoall.seq_num) {
                 return UCC_INPROGRESS;
             }
@@ -94,8 +94,8 @@ static ucc_status_t ucc_tl_mlx5_node_fanin(ucc_tl_mlx5_team_t *    team,
 }
 
 /* Each rank registers sbuf and rbuf and place the registration data
-   in the shared memory location. Next, all rank in node nitify the
-   ASR the registration data is ready using SHM Fanin */
+   in the shared memory location. Next, all rank in node notify the
+   ASR that the registration data is ready using SHM Fanin */
 static ucc_status_t ucc_tl_mlx5_reg_fanin_start(ucc_coll_task_t *coll_task)
 {
     ucc_tl_mlx5_schedule_t *task            = TASK_SCHEDULE(coll_task);
@@ -161,6 +161,7 @@ static ucc_status_t ucc_tl_mlx5_reg_fanin_start(ucc_coll_task_t *coll_task)
     ucc_tl_mlx5_get_my_ctrl(a2a, seq_index)->mkey_cache_flag = flag;
     ucc_tl_mlx5_update_mkeys_entries(a2a, task, flag);
 
+    a2a->node.fanin_index = 0;
     if (UCC_OK == ucc_tl_mlx5_node_fanin(team, task)) {
         tl_debug(UCC_TL_MLX5_TEAM_LIB(team), "fanin complete");
         coll_task->status = UCC_OK;
