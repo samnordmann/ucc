@@ -77,6 +77,10 @@ static ucc_config_field_t ucc_tl_mlx5_context_config_table[] = {
      ucc_offsetof(ucc_tl_mlx5_context_config_t, devices),
      UCC_CONFIG_TYPE_STRING_ARRAY},
 
+    {"FANIN_NPOLLS", "1000",
+     "Number of shared memory polling before returning UCC_INPROGRESS during internode FANIN",
+     ucc_offsetof(ucc_tl_mlx5_context_config_t, npolls), UCC_CONFIG_TYPE_UINT},
+
     {NULL}};
 
 UCC_CLASS_DEFINE_NEW_FUNC(ucc_tl_mlx5_lib_t, ucc_base_lib_t,

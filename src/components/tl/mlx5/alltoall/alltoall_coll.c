@@ -58,6 +58,8 @@ static ucc_status_t ucc_tl_mlx5_node_fanin(ucc_tl_mlx5_team_t *    team,
 {
     ucc_tl_mlx5_a2a_t *     a2a       = team->a2a;
     int                     seq_index = task->alltoall.seq_index;
+    int                     npolls    = UCC_TL_MLX5_TEAM_CTX(team)->cfg.npolls;
+    int                     polls     = 0;
     int                     i;
     ucc_tl_mlx5_a2a_ctrl_t *ctrl_v;
 
@@ -71,14 +73,20 @@ static ucc_status_t ucc_tl_mlx5_node_fanin(ucc_tl_mlx5_team_t *    team,
         ucc_tl_mlx5_get_my_ctrl(a2a, seq_index)->seq_num =
             task->alltoall.seq_num;
     } else {
-        for (; a2a->node.fanin_index < a2a->node.sbgp->group_size; a2a->node.fanin_index++) {
+        while (polls < npolls && a2a->node.fanin_index < a2a->node.sbgp->group_size) {
             if (a2a->node.fanin_index == a2a->node.sbgp->group_rank) {
+                a2a->node.fanin_index++;
                 continue;
             }
             ctrl_v = ucc_tl_mlx5_get_ctrl(a2a, seq_index, a2a->node.fanin_index);
-            if (ctrl_v->seq_num != task->alltoall.seq_num) {
-                return UCC_INPROGRESS;
+            if (ctrl_v->seq_num == task->alltoall.seq_num) {
+                a2a->node.fanin_index++;
+            } else {
+                polls++;
             }
+        }
+        if (a2a->node.fanin_index < a2a->node.sbgp->group_size) {
+            return UCC_INPROGRESS;
         }
         for (i = 0; i < a2a->node.sbgp->group_size; i++) {
             if (i == a2a->node.sbgp->group_rank) {
