@@ -56,6 +56,7 @@ typedef struct ucc_tl_mlx5_a2a_node {
     struct mlx5dv_mkey * team_recv_mkey;
     void *               umr_entries_buf;
     struct ibv_mr *      umr_entries_mr;
+    int                  fanin_index;
 } ucc_tl_mlx5_a2a_node_t;
 
 typedef struct a2a_net_ctrl {
