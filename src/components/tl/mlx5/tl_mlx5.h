@@ -50,7 +50,7 @@ typedef struct ucc_tl_mlx5_ib_qp_conf {
 
 typedef struct ucc_tl_mlx5_lib_config {
     ucc_tl_lib_config_t      super;
-    int                 asr_barrier;
+    int                      asr_barrier;
     int                      block_size;
     int                      num_dci_qps;
     int                      dc_threshold;
@@ -58,6 +58,7 @@ typedef struct ucc_tl_mlx5_lib_config {
     size_t                   dm_buf_num;
     int                      dm_host;
     ucc_tl_mlx5_ib_qp_conf_t qp_conf;
+    int                      fanin_kn_radix;
 } ucc_tl_mlx5_lib_config_t;
 
 typedef struct ucc_tl_mlx5_context_config {
