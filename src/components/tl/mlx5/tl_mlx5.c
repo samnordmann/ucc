@@ -67,6 +67,10 @@ static ucc_config_field_t ucc_tl_mlx5_lib_config_table[] = {
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, qp_conf.qp_max_atomic),
      UCC_CONFIG_TYPE_UINT},
 
+    {"FANIN_KN_RADIX", "4", "Radix of the knomial tree fanin algorithm",
+     ucc_offsetof(ucc_tl_mlx5_lib_config_t, fanin_kn_radix),
+     UCC_CONFIG_TYPE_UINT},
+
     {NULL}};
 
 static ucc_config_field_t ucc_tl_mlx5_context_config_table[] = {

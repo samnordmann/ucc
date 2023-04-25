@@ -1,9 +1,5 @@
 /**
-<<<<<<< HEAD
  * Copyright (c) 2021-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-=======
- * Copyright (c) 2022-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
->>>>>>> REVIEW: fix review comments
  *
  * See file LICENSE for terms.
  */
