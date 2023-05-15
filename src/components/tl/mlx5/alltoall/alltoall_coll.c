@@ -320,6 +320,7 @@ static ucc_status_t ucc_tl_mlx5_asr_barrier_start(ucc_coll_task_t *coll_task)
     //Reset atomic notification counter to 0
 #if ATOMIC_IN_MEMIC
     tl_mlx5_atomic_t zero = 0;
+    UCC_TL_MLX5_PROFILE_REQUEST_EVENT(task, "mlx5_alltoall_ibv_memcpy_start", 0);
     if (0 !=
         ibv_memcpy_to_dm(a2a->net.atomic.counters,
                          task->alltoall.seq_index * sizeof(tl_mlx5_atomic_t),
@@ -327,6 +328,7 @@ static ucc_status_t ucc_tl_mlx5_asr_barrier_start(ucc_coll_task_t *coll_task)
         tl_error(UCC_TASK_LIB(task), "failed to reset atomic in memic");
         return UCC_ERR_NO_MESSAGE;
     }
+    UCC_TL_MLX5_PROFILE_REQUEST_EVENT(task, "mlx5_alltoall_ibv_memcpy_done", 0);
 #else
     a2a->net.atomic.counters[task->alltoall.seq_index] = 0;
 #endif
@@ -366,9 +368,10 @@ static ucc_status_t ucc_tl_mlx5_asr_barrier_start(ucc_coll_task_t *coll_task)
                 status = send_done(team, i);
             }
             if (status != UCC_OK) {
-                tl_error(UCC_TASK_LIB(task), "failed  sending barrier notice");
+                tl_error(UCC_TASK_LIB(task), "failed sending barrier notice");
                 return status;
             }
+            UCC_TL_MLX5_PROFILE_REQUEST_EVENT(task, "mlx5_alltoall_barrier_send_posted", 0);
         }
         coll_task->status = UCC_OK;
         UCC_TL_MLX5_PROFILE_REQUEST_EVENT(task, "mlx5_alltoall_barrier_done", 0);
@@ -428,6 +431,7 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
                                           "mlx5_alltoall_block_send_start", 0);
     }
 
+    printf("node_size / block_size=%d, net_size=%d, pid=%d\n", node_size / block_size, net_size, getpid());
     for (i = 0; i < net_size; i++) {
         cyc_rank  = (i + a2a->net.sbgp->group_rank) % net_size;
         dest_rank = a2a->net.rank_map[cyc_rank];
@@ -458,6 +462,9 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
                     }
                 } else {
                     dm = ucc_mpool_get(&team->dm_pool);
+                    if (!dm) {
+                        printf("Waiting on dm for i=%d, j=%d, k=%d\n", i,j,k);
+                    }
                     while (!dm) {
                         status = send_done(team, cyc_rank);
                         if (UCC_OK != status) {
