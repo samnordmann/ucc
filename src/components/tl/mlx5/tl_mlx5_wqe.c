@@ -53,7 +53,7 @@ ucc_status_t ucc_tl_mlx5_post_transpose(struct ibv_qp *qp, uint32_t src_mr_lkey,
                                         uint16_t nrows, int send_flags)
 {
     uint32_t                  opcode   = MLX5_OPCODE_LOCAL_MMO;
-    uint32_t                  opmode   = 0x0; //TRanspose
+    uint32_t                  opmode   = 0x0; //Transpose
     uint32_t                  n_ds     = 4;
     struct ibv_qp_ex *        qp_ex    = ibv_qp_to_qp_ex(qp);
     struct mlx5dv_qp_ex *     mqp      = mlx5dv_qp_ex_from_ibv_qp_ex(qp_ex);

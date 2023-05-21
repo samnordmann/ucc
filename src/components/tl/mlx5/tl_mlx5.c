@@ -71,6 +71,12 @@ static ucc_config_field_t ucc_tl_mlx5_lib_config_table[] = {
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, fanin_kn_radix),
      UCC_CONFIG_TYPE_UINT},
 
+    {"NBR_SERIALIZED_BLOCKS", "8", "maximal number of blocks within "
+     "the set of blocks to be sent to one remote node to reuse the "
+     "same device memory chunk",
+     ucc_offsetof(ucc_tl_mlx5_lib_config_t, nbr_serialized_blocks),
+     UCC_CONFIG_TYPE_UINT},
+
     {NULL}};
 
 static ucc_config_field_t ucc_tl_mlx5_context_config_table[] = {
