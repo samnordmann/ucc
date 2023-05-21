@@ -431,7 +431,6 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
                                           "mlx5_alltoall_block_send_start", 0);
     }
 
-    printf("node_size / block_size=%d, net_size=%d, pid=%d\n", node_size / block_size, net_size, getpid());
     for (i = 0; i < net_size; i++) {
         cyc_rank  = (i + a2a->net.sbgp->group_rank) % net_size;
         dest_rank = a2a->net.rank_map[cyc_rank];
@@ -462,9 +461,6 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
                     }
                 } else {
                     dm = ucc_mpool_get(&team->dm_pool);
-                    if (!dm) {
-                        printf("Waiting on dm for i=%d, j=%d, k=%d\n", i,j,k);
-                    }
                     while (!dm) {
                         status = send_done(team, cyc_rank);
                         if (UCC_OK != status) {
