@@ -431,6 +431,14 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
     int i,j;
     int batch_size = UCC_TL_MLX5_TEAM_LIB(team)->cfg.block_batch_size;
 
+    batch_size = ucc_min(batch_size, nbr_block_to_send_per_loop);
+
+    while (nbr_block_to_send_per_loop % batch_size) {
+        batch_size--;
+    }
+
+    ucc_assert(nbr_block_to_send_per_loop % batch_size == 0);
+
     coll_task->status       = UCC_INPROGRESS;
     coll_task->super.status = UCC_INPROGRESS;
 
