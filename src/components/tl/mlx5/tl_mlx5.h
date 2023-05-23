@@ -60,6 +60,7 @@ typedef struct ucc_tl_mlx5_lib_config {
     ucc_tl_mlx5_ib_qp_conf_t qp_conf;
     int                      fanin_kn_radix;
     int                      nbr_serialized_blocks;
+    int                      block_batch_size;
 } ucc_tl_mlx5_lib_config_t;
 
 typedef struct ucc_tl_mlx5_context_config {

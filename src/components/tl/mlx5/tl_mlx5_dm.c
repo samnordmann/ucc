@@ -22,9 +22,10 @@ static void ucc_tl_mlx5_dm_chunk_init(ucc_mpool_t *mp,        //NOLINT
     ucc_tl_mlx5_dm_chunk_t *c = (ucc_tl_mlx5_dm_chunk_t *)obj;
     ucc_tl_mlx5_team_t *    team =
         ucc_container_of(mp, ucc_tl_mlx5_team_t, dm_pool);
-    const size_t memic_chunk = 8192;
     c->offset                = (ptrdiff_t)team->oob_req;
-    team->oob_req            = PTR_OFFSET(team->oob_req, memic_chunk);
+    team->oob_req            = PTR_OFFSET(team->oob_req, 
+                                        UCC_TL_MLX5_TEAM_LIB(team)->cfg.dm_buf_size 
+                                        * UCC_TL_MLX5_TEAM_LIB(team)->cfg.block_batch_size);
 }
 
 static void ucc_tl_mlx5_dm_chunk_release(ucc_mpool_t *mp, void *chunk) //NOLINT
@@ -157,7 +158,7 @@ ucc_status_t ucc_tl_mlx5_dm_init(ucc_tl_mlx5_team_t *team)
     ucc_status_t              status;
 
     status = ucc_tl_mlx5_dm_alloc_reg(
-        ctx->shared_ctx, ctx->shared_pd, cfg->dm_host, cfg->dm_buf_size,
+        ctx->shared_ctx, ctx->shared_pd, cfg->dm_host, cfg->dm_buf_size * cfg->block_batch_size,
         &cfg->dm_buf_num, &team->dm_ptr, &team->dm_mr, UCC_TL_TEAM_LIB(team));
     if (status != UCC_OK) {
         tl_error(UCC_TL_TEAM_LIB(team),
@@ -165,10 +166,10 @@ ucc_status_t ucc_tl_mlx5_dm_init(ucc_tl_mlx5_team_t *team)
         return status;
     }
     team->oob_req = NULL;
-    // printf("Number of MEMIC chunks = %ld, chunck size = %ld\n", cfg->dm_buf_num, cfg->dm_buf_size);
+    printf("Number of MEMIC chunks = %ld, chunck size = %ld\n", cfg->dm_buf_num, cfg->dm_buf_size  * cfg->block_batch_size);
     // TODO: fix case dm_host=true
     status = ucc_mpool_init(&team->dm_pool, 0, sizeof(ucc_tl_mlx5_dm_chunk_t),
-                            0, UCC_CACHE_LINE_SIZE, cfg->dm_buf_num,
+                            0, UCC_CACHE_LINE_SIZE, 1,
                             cfg->dm_buf_num, &ucc_tl_mlx5_dm_ops,
                             UCC_THREAD_MULTIPLE, "mlx5 dm pool");
     if (status != UCC_OK) {

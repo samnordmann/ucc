@@ -77,6 +77,10 @@ static ucc_config_field_t ucc_tl_mlx5_lib_config_table[] = {
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, nbr_serialized_blocks),
      UCC_CONFIG_TYPE_UINT},
 
+    {"BLOCK_BATCH_SIZE", "1", "TODO",
+     ucc_offsetof(ucc_tl_mlx5_lib_config_t, block_batch_size),
+     UCC_CONFIG_TYPE_UINT},
+
     {NULL}};
 
 static ucc_config_field_t ucc_tl_mlx5_context_config_table[] = {
