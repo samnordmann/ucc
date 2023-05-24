@@ -439,6 +439,8 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
 
     ucc_assert(nbr_block_to_send_per_loop % batch_size == 0);
 
+    printf("block_msgsize=%d, node_grid_dim=%d\n", block_msgsize, node_grid_dim);
+
     coll_task->status       = UCC_INPROGRESS;
     coll_task->super.status = UCC_INPROGRESS;
 
