@@ -71,14 +71,19 @@ static ucc_config_field_t ucc_tl_mlx5_lib_config_table[] = {
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, fanin_kn_radix),
      UCC_CONFIG_TYPE_UINT},
 
-    {"NBR_SERIALIZED_BLOCKS", "8", "maximal number of blocks within "
-     "the set of blocks to be sent to one remote node to reuse the "
-     "same device memory chunk",
-     ucc_offsetof(ucc_tl_mlx5_lib_config_t, nbr_serialized_blocks),
+    {"SEND_BATCH_SIZE", "1", "number of blocks that are transposed "
+    "on the NIC before being sent as a batch to a remote peer",
+     ucc_offsetof(ucc_tl_mlx5_lib_config_t, block_batch_size),
      UCC_CONFIG_TYPE_UINT},
 
-    {"BLOCK_BATCH_SIZE", "1", "TODO",
-     ucc_offsetof(ucc_tl_mlx5_lib_config_t, block_batch_size),
+    {"NBR_SERIALIZED_BATCHES", "8", "number of block batches "
+    "(within the set of blocks to be sent to a given remote peer)"
+     "serialized on the same device memory chunk",
+     ucc_offsetof(ucc_tl_mlx5_lib_config_t, nbr_serialized_batches),
+     UCC_CONFIG_TYPE_UINT},
+
+    {"NBR_BATCHES_PER_PASSAGE", "1024", "",
+     ucc_offsetof(ucc_tl_mlx5_lib_config_t, nbr_batches_per_passage),
      UCC_CONFIG_TYPE_UINT},
 
     {NULL}};

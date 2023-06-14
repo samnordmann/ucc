@@ -46,9 +46,11 @@ static ucc_status_t ucc_tl_mlx5_poll_cq(struct ibv_cq *cq, ucc_base_lib_t *lib)
         } else {
             ucc_tl_mlx5_dm_chunk_t *dm = (ucc_tl_mlx5_dm_chunk_t *)wcs[i].wr_id;
             dm->task->alltoall.blocks_completed++;
-            dm->counter++;
+            ucc_assert(dm->completed_jobs < dm->posted_jobs);
+            dm->completed_jobs++;
+            // printf("!!!!!!PID %i, inside poll cq, dm=%p, dm->addr=%lu, dm->counter=%i, dm->nbr_jobs=%i, dm->posted_jobs=%i\n", getpid(), dm, dm->addr, dm->counter, dm->nbr_jobs, dm->posted_jobs);
             /* printf("returning dm %p to pool\n", (void*)team->work_completion[i].wr_id); */
-            if (dm->counter == dm->nbr_jobs){
+            if (dm->posted_all && dm->completed_jobs == dm->posted_jobs) {
                 ucc_mpool_put(dm);
             }
         }
@@ -401,11 +403,32 @@ static void ucc_tl_mlx5_asr_barrier_progress(ucc_coll_task_t *coll_task)
     return;
 }
 
+ucc_tl_mlx5_dm_chunk_t* ucc_tl_mlx5_a2a_wait_for_dm_chunk (ucc_tl_mlx5_schedule_t *task)
+{
+    ucc_base_lib_t *        lib = UCC_TASK_LIB(task);
+    ucc_tl_mlx5_team_t *    team      = TASK_TEAM(task);
+    ucc_tl_mlx5_dm_chunk_t *dm = NULL;
+
+    dm = ucc_mpool_get(&team->dm_pool);
+    if (!dm) {
+        while (!dm) {
+            if (UCC_OK != ucc_tl_mlx5_poll_cq(team->a2a->net.cq, lib)) {
+                return NULL;
+            }
+            dm = ucc_mpool_get(&team->dm_pool);
+        }
+    }
+    dm->task = task;
+
+    return dm;
+}
+
 // add polling mechanism for blocks in order to maintain const qp tx rx
 static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
 {
     // printf("ucc_tl_mlx5_send_blocks_start\n");
     ucc_tl_mlx5_schedule_t *task      = TASK_SCHEDULE(coll_task);
+    ucc_base_lib_t *        lib = UCC_TASK_LIB(task);
     ucc_tl_mlx5_team_t *    team      = TASK_TEAM(task);
     ucc_tl_mlx5_a2a_t *     a2a       = team->a2a;
     int                     node_size = a2a->node.sbgp->group_size;
@@ -416,30 +439,28 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
     int          block_size   = task->alltoall.block_size;
     int          col_msgsize = task->alltoall.msg_size * block_size * node_size;
     int          block_msgsize  = SQUARED(block_size) * task->alltoall.msg_size;
-    int          dm_host        = UCC_TL_MLX5_TEAM_LIB(team)->cfg.dm_host;
     ucc_status_t status         = UCC_OK;
-    ucc_base_lib_t *        lib = UCC_TASK_LIB(task);
     int                     node_grid_dim = node_size / block_size;
     int                     seq_index = task->alltoall.seq_index;
     int                     node_idx, block_row, block_col, block_idx, rank, dest_rank, cyc_rank;
     uint64_t                src_addr, remote_addr;
     ucc_tl_mlx5_dm_chunk_t *dm = NULL;
-    uintptr_t               dm_addr = 0;
-    int nbr_block_to_send_per_loop = UCC_TL_MLX5_TEAM_LIB(team)->cfg.nbr_serialized_blocks;
-    int outer_block_loop = ucc_div_round_up(SQUARED(node_grid_dim), nbr_block_to_send_per_loop);
     int remaining_blocks;
     int i,j;
     int batch_size = UCC_TL_MLX5_TEAM_LIB(team)->cfg.block_batch_size;
+    int nbr_serialized_batches = UCC_TL_MLX5_TEAM_LIB(team)->cfg.nbr_serialized_batches;
+    int nbr_batches_per_passage = UCC_TL_MLX5_TEAM_LIB(team)->cfg.nbr_batches_per_passage;
+    int nbr_blocks_to_handle = nbr_serialized_batches * batch_size;
 
-    batch_size = ucc_min(batch_size, nbr_block_to_send_per_loop);
+    batch_size = ucc_min(batch_size, nbr_batches_per_passage);
 
-    while (nbr_block_to_send_per_loop % batch_size) {
+    while (nbr_batches_per_passage % batch_size) {
         batch_size--;
     }
 
-    ucc_assert(nbr_block_to_send_per_loop % batch_size == 0);
+    ucc_assert(nbr_batches_per_passage % batch_size == 0);
 
-    printf("block_msgsize=%d, node_grid_dim=%d\n", block_msgsize, node_grid_dim);
+    // printf("block_msgsize=%d, node_grid_dim=%d\n", block_msgsize, node_grid_dim);
 
     coll_task->status       = UCC_INPROGRESS;
     coll_task->super.status = UCC_INPROGRESS;
@@ -451,7 +472,7 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
                                           "mlx5_alltoall_block_send_start", 0);
     }
 
-    for (j = 0; j < outer_block_loop; j++) {
+    for (j = 0; j < nbr_batches_per_passage; j++) {
         for (node_idx = 0; node_idx < net_size; node_idx++) {
             cyc_rank  = (node_idx + a2a->net.sbgp->group_rank) % net_size;
             dest_rank = a2a->net.rank_map[cyc_rank];
@@ -459,36 +480,18 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
                 continue;
             }
             remaining_blocks = SQUARED(node_grid_dim) - task->alltoall.op->blocks_sent[cyc_rank];
+            dm=NULL;
             if (cyc_rank != a2a->net.sbgp->group_rank && remaining_blocks > 0) {
-                dm = ucc_mpool_get(&team->dm_pool);
-                if (!dm) {
-                    // printf("PID: %d, Waiting for dm at rank %d for cyc_rank %d\n", 
-                    //                                 getpid(), a2a->net.sbgp->group_rank, cyc_rank);
-                    while (!dm) {
-                        status = ucc_tl_mlx5_poll_cq(a2a->net.cq, lib);
-                        if (UCC_OK != status) {
-                            return status;
-                        }
-                        dm = ucc_mpool_get(&team->dm_pool);
-                    }
-                } else {
-                //     printf("PID: %d, Got dm at offset %ld at rank %d for cyc_rank %d\n", getpid(), dm->offset /8192,
-                //                                      a2a->net.sbgp->group_rank, cyc_rank);
+                dm = ucc_tl_mlx5_a2a_wait_for_dm_chunk (task);
+                if (status != UCC_OK) {
+                    return status;
                 }
-                if (dm_host) {
-                    dm_addr =
-                        (uintptr_t)PTR_OFFSET(team->dm_ptr, dm->offset);
-                } else {
-                    dm_addr = dm->offset; // dm reg mr 0 based
-                }
-                dm->task = task;
-                dm->counter = 0;
-                dm->nbr_jobs = ucc_min(nbr_block_to_send_per_loop, remaining_blocks) / batch_size;
+                // dm->nbr_jobs = ucc_div_round_up(ucc_min(nbr_serialized_batches, remaining_blocks), batch_size);
             }
             send_start(team, cyc_rank);
             remote_addr = 0;
-            for (i = 0; 
-                i < nbr_block_to_send_per_loop && task->alltoall.op->blocks_sent[cyc_rank] < SQUARED(node_grid_dim); 
+            for (i = 0;
+                i < nbr_blocks_to_handle && task->alltoall.op->blocks_sent[cyc_rank] < SQUARED(node_grid_dim); 
                 i++, task->alltoall.op->blocks_sent[cyc_rank]++) {
                 block_idx = task->alltoall.op->blocks_sent[cyc_rank];
                 block_row = block_idx / node_grid_dim;
@@ -498,7 +501,6 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
                 uintptr_t remote_addr_i =
                     (uintptr_t)(op_msgsize * seq_index + node_msgsize * rank +
                                 block_msgsize * block_col + col_msgsize * block_row);
-                uintptr_t dm_addr_i = dm_addr + (i % batch_size) * block_msgsize;
                 if (i % batch_size == 0) {
                     // src_addr = (uintptr_t)(node_msgsize * dest_rank +
                     //                         col_msgsize * block_row + block_msgsize * block_col);
@@ -519,6 +521,7 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
                 } else {
                     // printf("PID: %d, at rank %d, cyc_rank %d, i = %d, batch_size=%d, block_idx=%d, block_msgsize=%d transpose from src_addr %ld to dm_addr_i=%ld (%ld)\n",
                     //         getpid(), a2a->net.sbgp->group_rank, cyc_rank, i, batch_size, block_idx, block_msgsize, src_addr, dm_addr_i, dm_addr_i / block_msgsize);
+                    uintptr_t dm_addr_i = dm->addr + (i % batch_size) * block_msgsize;
                     status = ucc_tl_mlx5_post_transpose(
                         tl_mlx5_get_qp(a2a, cyc_rank),
                         a2a->node.ops[seq_index].send_mkeys[0]->lkey,
@@ -528,12 +531,14 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
                         return status;
                     }
                     if (((i+1) % batch_size) == 0
-                        || (i+1) == nbr_block_to_send_per_loop
+                        || (i+1) == nbr_blocks_to_handle
                         || (task->alltoall.op->blocks_sent[cyc_rank]+1) == SQUARED(node_grid_dim)) {
-                        // printf("!PID: %d, at rank %d, cyc_rank %d, i = %d, batch_size=%d, block_idx=%d, block_msgsize=%d SEND from dm_addr %ld to remote_addr=%ld\n",
-                        //         getpid(), a2a->net.sbgp->group_rank, cyc_rank, i, batch_size, block_idx, block_msgsize, dm_addr, remote_addr);
+                        // if (!a2a->net.sbgp->group_rank) {
+                        //     printf("!PID: %d, at rank %d, cyc_rank %d, i = %d, batch_size=%d, block_idx=%d, block_msgsize=%d SEND from dm_addr %ld to remote_addr=%ld\n dm = %p, dm->counter = %d, dm->nbr_jobs = %d, dm->posted_jobs=%i\n",
+                        //             getpid(), a2a->net.sbgp->group_rank, cyc_rank, i, batch_size, block_idx, block_msgsize, dm->addr, remote_addr, dm, dm->counter, dm->nbr_jobs, dm->posted_jobs);
+                        // }
                         status = send_block_data(
-                            a2a, cyc_rank, dm_addr, block_msgsize * batch_size,
+                            a2a, cyc_rank, dm->addr, block_msgsize * batch_size,
                             team->dm_mr->lkey, remote_addr,
                             a2a->net.rkeys[cyc_rank], IBV_SEND_SIGNALED, dm);
                         if (status != UCC_OK) {
@@ -541,13 +546,16 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
                                         block_col);
                             return status;
                         }
-                        // dm->task->alltoall.blocks_sent++;
+                        dm->posted_jobs++;
                     }
                 }
             }
             status = send_done(team, cyc_rank);
             if (status != UCC_OK) {
                 return status;
+            }
+            if (dm) {
+                dm->posted_all=1;
             }
             if (task->alltoall.op->blocks_sent[cyc_rank] == SQUARED(node_grid_dim)) {
                 send_start(team, cyc_rank);
@@ -615,7 +623,6 @@ ucc_tl_mlx5_send_blocks_leftovers_start(ucc_coll_task_t *coll_task)
     int block_msgsize_leftovers =
         block_size_leftovers_side * block_size * msg_size;
     int          corner_msgsize = SQUARED(block_size_leftovers_side) * msg_size;
-    int          dm_host        = UCC_TL_MLX5_TEAM_LIB(team)->cfg.dm_host;
     ucc_status_t status         = UCC_OK;
     ucc_base_lib_t *lib         = UCC_TASK_LIB(coll_task);
     int             nbc         = task->alltoall.num_of_blocks_columns;
@@ -689,12 +696,7 @@ ucc_tl_mlx5_send_blocks_leftovers_start(ucc_coll_task_t *coll_task)
                         dm = ucc_mpool_get(&team->dm_pool);
                         send_start(team, cyc_rank);
                     }
-                    if (dm_host) {
-                        dm_addr =
-                            (uintptr_t)PTR_OFFSET(team->dm_ptr, dm->offset);
-                    } else {
-                        dm_addr = dm->offset; // dm reg mr 0 based
-                    }
+                    dm_addr = dm->addr;
                     dm->task = task;
 
                     status = ucc_tl_mlx5_post_transpose(

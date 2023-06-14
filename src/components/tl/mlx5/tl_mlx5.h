@@ -59,8 +59,9 @@ typedef struct ucc_tl_mlx5_lib_config {
     int                      dm_host;
     ucc_tl_mlx5_ib_qp_conf_t qp_conf;
     int                      fanin_kn_radix;
-    int                      nbr_serialized_blocks;
     int                      block_batch_size;
+    int                      nbr_serialized_batches;
+    int                      nbr_batches_per_passage;
 } ucc_tl_mlx5_lib_config_t;
 
 typedef struct ucc_tl_mlx5_context_config {
@@ -106,18 +107,19 @@ ucc_tl_mlx5_get_rcache_reg_data(ucc_rcache_region_t *region)
 
 typedef struct ucc_tl_mlx5_schedule ucc_tl_mlx5_schedule_t;
 typedef struct ucc_tl_mlx5_dm_chunk_t {
-    ptrdiff_t offset; // 0 based offset from the beginning of
+    uintptr_t addr; // 0 based offset from the beginning of
                       // memic_mr (obtained with ibv_reg_dm_mr)
     ucc_tl_mlx5_schedule_t *task;
-    int                     counter;
-    int                     nbr_jobs;
+    int                     posted_jobs;
+    int                     posted_all;
+    int                     completed_jobs;
 } ucc_tl_mlx5_dm_chunk_t;
 
 typedef struct ucc_tl_mlx5_a2a ucc_tl_mlx5_a2a_t;
 typedef struct ucc_tl_mlx5_team {
     ucc_tl_team_t           super;
     ucc_service_coll_req_t *scoll_req;
-    void *                  oob_req;
+    ptrdiff_t               dm_offset;
     ucc_mpool_t             dm_pool;
     struct ibv_dm *         dm_ptr;
     struct ibv_mr *         dm_mr;

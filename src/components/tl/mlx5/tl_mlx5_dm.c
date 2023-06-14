@@ -22,10 +22,16 @@ static void ucc_tl_mlx5_dm_chunk_init(ucc_mpool_t *mp,        //NOLINT
     ucc_tl_mlx5_dm_chunk_t *c = (ucc_tl_mlx5_dm_chunk_t *)obj;
     ucc_tl_mlx5_team_t *    team =
         ucc_container_of(mp, ucc_tl_mlx5_team_t, dm_pool);
-    c->offset                = (ptrdiff_t)team->oob_req;
-    team->oob_req            = PTR_OFFSET(team->oob_req, 
-                                        UCC_TL_MLX5_TEAM_LIB(team)->cfg.dm_buf_size 
-                                        * UCC_TL_MLX5_TEAM_LIB(team)->cfg.block_batch_size);
+    c->addr         = (uintptr_t)PTR_OFFSET(
+                                     (UCC_TL_MLX5_TEAM_LIB(team)->cfg.dm_host)?
+                                     team->dm_ptr : NULL,
+                                  team->dm_offset);
+    team->dm_offset =  team->dm_offset +
+                            UCC_TL_MLX5_TEAM_LIB(team)->cfg.dm_buf_size
+                            * UCC_TL_MLX5_TEAM_LIB(team)->cfg.block_batch_size;
+    c->posted_jobs = 0;
+    c->posted_all=0;
+    c->completed_jobs      = 0;
 }
 
 static void ucc_tl_mlx5_dm_chunk_release(ucc_mpool_t *mp, void *chunk) //NOLINT
@@ -165,13 +171,13 @@ ucc_status_t ucc_tl_mlx5_dm_init(ucc_tl_mlx5_team_t *team)
                  "failed to alloc and register device memory");
         return status;
     }
-    team->oob_req = NULL;
+    team->dm_offset = 0;
     printf("Number of MEMIC chunks = %ld, chunck size = %ld\n", cfg->dm_buf_num, cfg->dm_buf_size  * cfg->block_batch_size);
     // TODO: fix case dm_host=true
     status = ucc_mpool_init(&team->dm_pool, 0, sizeof(ucc_tl_mlx5_dm_chunk_t),
                             0, UCC_CACHE_LINE_SIZE, 1,
                             cfg->dm_buf_num, &ucc_tl_mlx5_dm_ops,
-                            UCC_THREAD_MULTIPLE, "mlx5 dm pool");
+                            ctx->super.super.ucc_context->thread_mode, "mlx5 dm pool");
     if (status != UCC_OK) {
         tl_error(UCC_TL_TEAM_LIB(team), "failed to init dm pool");
         ucc_tl_mlx5_dm_cleanup(team);
