@@ -29,9 +29,9 @@ static void ucc_tl_mlx5_dm_chunk_init(ucc_mpool_t *mp,        //NOLINT
     team->dm_offset =  team->dm_offset +
                             UCC_TL_MLX5_TEAM_LIB(team)->cfg.dm_buf_size
                             * UCC_TL_MLX5_TEAM_LIB(team)->cfg.block_batch_size;
-    c->posted_jobs = 0;
+    c->posted_sends = 0;
     c->posted_all=0;
-    c->completed_jobs      = 0;
+    c->completed_sends      = 0;
 }
 
 static void ucc_tl_mlx5_dm_chunk_release(ucc_mpool_t *mp, void *chunk) //NOLINT
