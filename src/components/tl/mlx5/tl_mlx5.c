@@ -27,17 +27,10 @@ static ucc_config_field_t ucc_tl_mlx5_lib_config_table[] = {
     {"DM_BUF_NUM", "auto", "Number of DM buffers to alloc",
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, dm_buf_num),
      UCC_CONFIG_TYPE_ULUNITS},
-    
-    {"FORCE_REGULAR", "y", "force the regular case",
+
+    {"FORCE_REGULAR", "y", "Force the regular case where the block dimensions "
+    "divide ppn. Requires BLOCK_SIZE=0",
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, force_regular), UCC_CONFIG_TYPE_BOOL},
-
-    // {"BLOCK_HEIGHT", "0",
-    //  "Height of the blocks that are sent using blocked AlltoAll Algorithm",
-    //  ucc_offsetof(ucc_tl_mlx5_lib_config_t, block_height), UCC_CONFIG_TYPE_UINT},
-
-    // {"BLOCK_WIDTH", "0",
-    //  "Width of the blocks that are sent using blocked AlltoAll Algorithm",
-    //  ucc_offsetof(ucc_tl_mlx5_lib_config_t, block_width), UCC_CONFIG_TYPE_UINT},
 
     {"BLOCK_SIZE", "0",
      "Size of the blocks that are sent using blocked AlltoAll Algorithm",
@@ -82,13 +75,13 @@ static ucc_config_field_t ucc_tl_mlx5_lib_config_table[] = {
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, fanin_kn_radix),
      UCC_CONFIG_TYPE_UINT},
 
-    {"SEND_BATCH_SIZE", "8", "number of blocks that are transposed "
+    {"SEND_BATCH_SIZE", "1", "number of blocks that are transposed "
     "on the NIC before being sent as a batch to a remote peer",
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, block_batch_size),
      UCC_CONFIG_TYPE_UINT},
 
-    {"NBR_SERIALIZED_BATCHES", "2", "number of block batches "
-    "(within the set of blocks to be sent to a given remote peer)"
+    {"NBR_SERIALIZED_BATCHES", "1", "number of block batches "
+    "(within the set of blocks to be sent to a given remote peer) "
      "serialized on the same device memory chunk",
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, nbr_serialized_batches),
      UCC_CONFIG_TYPE_UINT},

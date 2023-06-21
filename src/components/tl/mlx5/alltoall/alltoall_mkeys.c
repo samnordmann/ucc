@@ -258,19 +258,14 @@ ucc_status_t ucc_tl_mlx5_populate_send_recv_mkeys(ucc_tl_mlx5_team_t *    team,
     int          nbc          = req->alltoall.num_of_blocks_columns;
     int          seq_index    = req->alltoall.seq_index;
     int          n_mkeys      = nbc ? nbc : 1;
-    int          repeat_count = 1410065407;
+    int          repeat_count;
     int          i;
     ucc_status_t status;
 
-    ucc_assert(nbc == 0);
-
     if (ucc_tl_mlx5_get_my_ctrl(a2a, seq_index)->mkey_cache_flag &
         UCC_MLX5_NEED_SEND_MKEY_UPDATE) {
-        // repeat_count = nbc ? a2a->net.sbgp->group_size
-        //                 : UCC_TL_TEAM_SIZE(team) / req->alltoall.block_height;
-        // repeat_count = nbc ? a2a->net.sbgp->group_size
-                        // : UCC_TL_TEAM_SIZE(team) / req->alltoall.block_width;
-        printf(":::: ::: ______ ___ _SEND, repeat_count=%d\n", repeat_count); 
+        repeat_count = nbc ? a2a->net.sbgp->group_size
+                        : UCC_TL_TEAM_SIZE(team) / req->alltoall.block_width;
         for (i = 0; i < n_mkeys; i++) {
             status = populate_strided_mkey(a2a, send_mem_access_flags,
                                            node->ops[seq_index].send_mkeys[i],
@@ -285,11 +280,8 @@ ucc_status_t ucc_tl_mlx5_populate_send_recv_mkeys(ucc_tl_mlx5_team_t *    team,
     }
     if (ucc_tl_mlx5_get_my_ctrl(a2a, seq_index)->mkey_cache_flag &
         UCC_MLX5_NEED_RECV_MKEY_UPDATE) {
-        // repeat_count = nbc ? a2a->net.sbgp->group_size
-        //                 : UCC_TL_TEAM_SIZE(team) / req->alltoall.block_width;
-        // repeat_count = nbc ? a2a->net.sbgp->group_size
-                        // : UCC_TL_TEAM_SIZE(team) / req->alltoall.block_height;
-        printf(":::: ::: ______ ___ _RECV, repeat_count=%d\n", repeat_count); 
+        repeat_count = nbc ? a2a->net.sbgp->group_size
+                        : UCC_TL_TEAM_SIZE(team) / req->alltoall.block_height;
         for (i = 0; i < n_mkeys; i++) {
             status = populate_strided_mkey(a2a, recv_mem_access_flags,
                                            node->ops[seq_index].recv_mkeys[i],
@@ -309,7 +301,6 @@ static void update_mkey_entry(ucc_tl_mlx5_a2a_t *     a2a,
                               ucc_tl_mlx5_schedule_t *req, int direction_send)
 {
     ucc_tl_mlx5_a2a_node_t *      node       = &a2a->node;
-    int                           block_size = req->alltoall.block_size;
     int                           block_height = req->alltoall.block_height;
     int                           block_width = req->alltoall.block_width;
     size_t                        msg_size   = req->alltoall.msg_size;
@@ -324,9 +315,7 @@ static void update_mkey_entry(ucc_tl_mlx5_a2a_t *     a2a,
         mkey_entry = (umr_t *)(direction_send ? MY_SEND_UMR_DATA(req, a2a, 0)
                                               : MY_RECV_UMR_DATA(req, a2a, 0));
         mkey_entry->addr        = (uintptr_t)buff->addr;
-        // mkey_entry->bytes_count = (!direction_send? block_width : block_height) * msg_size;
         mkey_entry->bytes_count = (direction_send? block_width : block_height) * msg_size;
-        printf("______ ___ _direction_send=%d, bytes_count=%d\n", direction_send, mkey_entry->bytes_count); 
         mkey_entry->bytes_skip  = 0;
         mkey_entry->lkey        = direction_send ? buff->lkey : buff->rkey;
         //        tl_debug(lib,
@@ -337,22 +326,22 @@ static void update_mkey_entry(ucc_tl_mlx5_a2a_t *     a2a,
         //                 mkey_entry->bytes_skip, mkey_entry->lkey);
     } else {
         for (i = 0; i < nbc; i++) {
-            ucc_assert(0);
+            ucc_assert(block_height == block_width);
             mkey_entry =
                 (umr_t *)(direction_send ? MY_SEND_UMR_DATA(req, a2a, i)
                                          : MY_RECV_UMR_DATA(req, a2a, i));
             mkey_entry->addr =
-                (uintptr_t)buff->addr + i * (block_size * msg_size);
+                (uintptr_t)buff->addr + i * (block_height * msg_size);
             mkey_entry->bytes_count =
                 (i == (nbc - 1))
-                    ? ((node->sbgp->group_size % block_size) * msg_size)
-                    : (block_size * msg_size);
+                    ? ((node->sbgp->group_size % block_height) * msg_size)
+                    : (block_height * msg_size);
             mkey_entry->bytes_skip =
                 (i == (nbc - 1))
                     ? ((node->sbgp->group_size -
-                        (node->sbgp->group_size % block_size)) *
+                        (node->sbgp->group_size % block_height)) *
                        msg_size)
-                    : ((node->sbgp->group_size - block_size) * msg_size);
+                    : ((node->sbgp->group_size - block_height) * msg_size);
             mkey_entry->lkey = direction_send ? buff->lkey : buff->rkey;
             //            tl_debug(lib,
             //                     "%s MasterMKey Strided KLM entries[%d,%d]: addr = %"PRIx64", "

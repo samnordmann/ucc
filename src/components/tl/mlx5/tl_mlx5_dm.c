@@ -172,7 +172,6 @@ ucc_status_t ucc_tl_mlx5_dm_init(ucc_tl_mlx5_team_t *team)
         return status;
     }
     team->dm_offset = 0;
-    printf("Number of MEMIC chunks = %ld, chunck size = %ld\n", cfg->dm_buf_num, cfg->dm_buf_size  * cfg->block_batch_size);
     // TODO: fix case dm_host=true
     status = ucc_mpool_init(&team->dm_pool, 0, sizeof(ucc_tl_mlx5_dm_chunk_t),
                             0, UCC_CACHE_LINE_SIZE, 1,

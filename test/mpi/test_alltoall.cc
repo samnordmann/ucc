@@ -113,8 +113,6 @@ ucc_status_t TestAlltoall::check()
         ucc_context_progress(team.ctx);
     } while(!completed);
 
-    int rank;
-    MPI_Comm_rank(team.comm, &rank);
-    return compare_buffers_rank(rbuf, check_buf, single_rank_count * size, dt,
-                           mem_type, rank);
+    return compare_buffers(rbuf, check_buf, single_rank_count * size, dt,
+                           mem_type);
 }

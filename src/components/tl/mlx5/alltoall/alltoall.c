@@ -307,8 +307,6 @@ ucc_status_t ucc_tl_mlx5_a2a_init_progress(ucc_tl_mlx5_team_t *tl_team)
             tl_error(lib, "max block_size is %d", MAX_BLOCK_SIZE);
             return UCC_ERR_NO_MESSAGE;
         }
-        // a2a->requested_block_height = UCC_TL_MLX5_TEAM_LIB(team)->cfg.block_height;
-        // a2a->requested_block_width = UCC_TL_MLX5_TEAM_LIB(team)->cfg.block_width;
         a2a->requested_block_size = UCC_TL_MLX5_TEAM_LIB(team)->cfg.block_size;
         if (a2a->node.asr_rank == node_rank) {
             status = ucc_tl_mlx5_a2a_alloc_atomic(team);
