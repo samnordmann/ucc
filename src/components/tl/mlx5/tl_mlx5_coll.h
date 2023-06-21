@@ -23,6 +23,8 @@ typedef struct ucc_tl_mlx5_schedule {
             int                     seq_index;
             int                     num_of_blocks_columns;
             int                     block_size;
+            int                     block_height;
+            int                     block_width;
             int                     started;
             int                     send_blocks_enqueued;
             int                     blocks_sent;

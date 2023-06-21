@@ -27,6 +27,17 @@ static ucc_config_field_t ucc_tl_mlx5_lib_config_table[] = {
     {"DM_BUF_NUM", "auto", "Number of DM buffers to alloc",
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, dm_buf_num),
      UCC_CONFIG_TYPE_ULUNITS},
+    
+    {"FORCE_REGULAR", "y", "force the regular case",
+     ucc_offsetof(ucc_tl_mlx5_lib_config_t, force_regular), UCC_CONFIG_TYPE_BOOL},
+
+    // {"BLOCK_HEIGHT", "0",
+    //  "Height of the blocks that are sent using blocked AlltoAll Algorithm",
+    //  ucc_offsetof(ucc_tl_mlx5_lib_config_t, block_height), UCC_CONFIG_TYPE_UINT},
+
+    // {"BLOCK_WIDTH", "0",
+    //  "Width of the blocks that are sent using blocked AlltoAll Algorithm",
+    //  ucc_offsetof(ucc_tl_mlx5_lib_config_t, block_width), UCC_CONFIG_TYPE_UINT},
 
     {"BLOCK_SIZE", "0",
      "Size of the blocks that are sent using blocked AlltoAll Algorithm",

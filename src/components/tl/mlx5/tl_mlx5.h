@@ -62,6 +62,7 @@ typedef struct ucc_tl_mlx5_lib_config {
     int                      block_batch_size;
     int                      nbr_serialized_batches;
     int                      nbr_batches_per_passage;
+    int                      force_regular;
 } ucc_tl_mlx5_lib_config_t;
 
 typedef struct ucc_tl_mlx5_context_config {

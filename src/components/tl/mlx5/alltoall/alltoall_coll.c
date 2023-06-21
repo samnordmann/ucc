@@ -434,11 +434,19 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
     int op_msgsize = node_size * a2a->max_msg_size * UCC_TL_TEAM_SIZE(team) *
                      a2a->max_num_of_columns;
     int          node_msgsize = SQUARED(node_size) * task->alltoall.msg_size;
-    int          block_size   = task->alltoall.block_size;
-    int          col_msgsize = task->alltoall.msg_size * block_size * node_size;
-    int          block_msgsize  = SQUARED(block_size) * task->alltoall.msg_size;
+    // int          block_size   = task->alltoall.block_size; //aaaa
+    int block_h = task->alltoall.block_height;
+    int block_w = task->alltoall.block_width;
+    // int          col_msgsize = task->alltoall.msg_size * block_size * node_size;
+    int          col_msgsize = task->alltoall.msg_size * block_w * node_size;
+    int          line_msgsize = task->alltoall.msg_size * block_h * node_size;
+    // int          block_msgsize  = SQUARED(block_size) * task->alltoall.msg_size;
+    int          block_msgsize  = block_h * block_w * task->alltoall.msg_size;
     ucc_status_t status         = UCC_OK;
-    int                     node_grid_dim = node_size / block_size;
+    // int                     node_grid_dim = node_size / block_size;
+    int                     node_grid_h = node_size / block_h;
+    int                     node_grid_w = node_size / block_w;
+    int node_nbr_blocks = (node_size * node_size) / (block_h * block_w);
     int                     seq_index = task->alltoall.seq_index;
     int                     node_idx, block_row, block_col, block_idx, rank, dest_rank, cyc_rank;
     uint64_t                src_addr, remote_addr;
@@ -467,7 +475,7 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
                 continue;
             }
             dm = NULL;
-            if (!send_to_self && task->alltoall.op->blocks_sent[cyc_rank] < SQUARED(node_grid_dim)) {
+            if (!send_to_self && task->alltoall.op->blocks_sent[cyc_rank] < node_nbr_blocks) {
                 dm = ucc_tl_mlx5_a2a_wait_for_dm_chunk (task);
                 if (status != UCC_OK) {
                     return status;
@@ -476,24 +484,30 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
             send_start(team, cyc_rank);
             for (i = 0; i < nbr_serialized_batches; i++) {
                 for (k = 0;
-                      k < batch_size && task->alltoall.op->blocks_sent[cyc_rank] < SQUARED(node_grid_dim); 
+                      k < batch_size && task->alltoall.op->blocks_sent[cyc_rank] < node_nbr_blocks; 
                       k++, task->alltoall.op->blocks_sent[cyc_rank]++) {
                     block_idx = task->alltoall.op->blocks_sent[cyc_rank];
-                    block_row = block_idx / node_grid_dim;
-                    block_col = block_idx % node_grid_dim;
+                    // block_row = block_idx / node_grid_h;
+                    // block_col = block_idx % node_grid_h;
+                    block_col = block_idx % node_grid_w;
+                    block_row = block_idx / node_grid_w;
                     src_addr = (uintptr_t)(op_msgsize * seq_index + node_msgsize * dest_rank +
                                             col_msgsize * block_col + block_msgsize * block_row);
                     if (send_to_self || !k) {
                         remote_addr =
                             (uintptr_t)(op_msgsize * seq_index + node_msgsize * rank +
-                                        block_msgsize * block_col + col_msgsize * block_row);
+                                        block_msgsize * block_col + line_msgsize * block_row);
+                    }
+                    if (dest_rank == 0){
+                        printf("line_msgsize=%d, seq_index=%d, send_to_self=%d, rank=%d, dest_rank=%d, node_msgsize=%d, block_h=%d, block_w=%d, col_msgsize=%d, node_grid_h=%d, node_grid_w=%d, node_nbr_blocks=%d, i=%d, k=%d, block_idx=%d, block_row=%d, block_col=%d, src_addr=%ld, remote_addr=%ld, block_msgsize=%d\n\n",
+                        line_msgsize, seq_index, send_to_self, rank, dest_rank, node_msgsize, block_h, block_w, col_msgsize, node_grid_h, node_grid_w, node_nbr_blocks, i, k, block_idx, block_row, block_col, src_addr, remote_addr, block_msgsize);
                     }
                     if (send_to_self) {
                         status = ucc_tl_mlx5_post_transpose(
                             tl_mlx5_get_qp(a2a, cyc_rank),
                             a2a->node.ops[seq_index].send_mkeys[0]->lkey,
                             a2a->net.rkeys[cyc_rank], src_addr, remote_addr,
-                            task->alltoall.msg_size, block_size, block_size,
+                            task->alltoall.msg_size, block_w, block_h,
                             (block_row == 0 && block_col == 0) ? IBV_SEND_SIGNALED : 0);
                         if (UCC_OK != status) {
                             return status;
@@ -503,7 +517,7 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
                             tl_mlx5_get_qp(a2a, cyc_rank),
                             a2a->node.ops[seq_index].send_mkeys[0]->lkey,
                             team->dm_mr->rkey, src_addr, dm->addr + k * block_msgsize,
-                            task->alltoall.msg_size, block_size, block_size, 0);
+                            task->alltoall.msg_size, block_w, block_h, 0);
                         if (UCC_OK != status) {
                             return status;
                         }
@@ -529,7 +543,7 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
             if (dm) {
                 dm->posted_all = 1;
             }
-            if (task->alltoall.op->blocks_sent[cyc_rank] == SQUARED(node_grid_dim)) {
+            if (task->alltoall.op->blocks_sent[cyc_rank] == node_nbr_blocks) {
                 send_start(team, cyc_rank);
                 status = send_atomic(a2a, cyc_rank, tl_mlx5_atomic_addr(task, cyc_rank),
                                         tl_mlx5_atomic_rkey(task, cyc_rank));
@@ -817,12 +831,12 @@ static inline int power2(int value)
     return p;
 }
 
-static inline int block_size_fits(size_t msgsize, int block_size)
+static inline int block_size_fits(size_t msgsize, int height, int width)
 {
     size_t t1    = power2(ucc_max(msgsize, 8));
-    size_t tsize = block_size * ucc_max(power2(block_size) * t1, MAX_MSG_SIZE);
+    size_t tsize = height * ucc_max(power2(width) * t1, MAX_MSG_SIZE);
 
-    return tsize <= MAX_TRANSPOSE_SIZE;
+    return tsize <= MAX_TRANSPOSE_SIZE && msgsize <= 128 && height <= 64 && width <= 64;
 }
 
 static inline int get_block_size(ucc_tl_mlx5_schedule_t *task)
@@ -832,11 +846,42 @@ static inline int get_block_size(ucc_tl_mlx5_schedule_t *task)
     int                 block_size;
 
     block_size = ppn;
-    while (!block_size_fits(task->alltoall.msg_size, block_size)) {
+    while (!block_size_fits(task->alltoall.msg_size, block_size, block_size)) {
         block_size--;
     }
     return block_size;
 }
+
+static inline void get_block_dimensions(ucc_tl_mlx5_schedule_t *task, int* block_height, int* block_width)
+{
+    int                 ppn  = TASK_TEAM(task)->a2a->node.sbgp->group_size;
+    int                 h,w, h_best=1, w_best=1;
+
+    for (h = 1; h <= 64; h++) {
+        if (ppn % h) {
+            continue;
+        }
+        for (w = 1; w <= h; w++) {
+            if (ppn % w){
+                continue;
+            }
+            if (block_size_fits(task->alltoall.msg_size, h, w)
+                && h*w >= h_best*w_best) {
+                if ( h*w > h_best*w_best || h/w < h_best/w_best) {
+                    h_best = h;
+                    w_best = w;
+                }
+            }
+        }
+    }
+    printf("h_best=%d, w_best=%d, ppn=%d, msg_size=%ld\n",h_best, w_best, ppn, task->alltoall.msg_size);
+    ucc_assert(ppn % h_best == 0);
+    ucc_assert(ppn % w_best == 0);
+
+    *block_height = h_best;
+    *block_width  = w_best;
+}
+
 
 UCC_TL_MLX5_PROFILE_FUNC(ucc_status_t, ucc_tl_mlx5_alltoall_init,
                          (coll_args, team, task_h),
@@ -889,8 +934,20 @@ UCC_TL_MLX5_PROFILE_FUNC(ucc_status_t, ucc_tl_mlx5_alltoall_init,
     tl_debug(UCC_TL_TEAM_LIB(tl_team), "Seq num is %d", task->alltoall.seq_num);
     a2a->sequence_number += 1;
 
-    block_size = a2a->requested_block_size ? a2a->requested_block_size
-                                           : get_block_size(task);
+    if (UCC_TL_MLX5_TEAM_LIB(tl_team)->cfg.force_regular) {
+        get_block_dimensions(task, &task->alltoall.block_height, &task->alltoall.block_width);
+        ucc_assert(!(a2a->node.sbgp->group_size % task->alltoall.block_height));
+        ucc_assert(!(a2a->node.sbgp->group_size % task->alltoall.block_width));
+        task->alltoall.block_size =   //todo: remove
+                        block_size = a2a->requested_block_size ? a2a->requested_block_size 
+                                            : get_block_size(task);
+        printf("block_size=%d\n", block_size);
+    } else {
+        ucc_assert(0);
+        block_size = a2a->requested_block_size ? a2a->requested_block_size
+                                            : get_block_size(task);
+        task->alltoall.block_size = task->alltoall.block_height = task->alltoall.block_width = block_size;
+    }
 
     //todo following section correct assuming homogenous PPN across all nodes
     task->alltoall.num_of_blocks_columns =
@@ -903,23 +960,22 @@ UCC_TL_MLX5_PROFILE_FUNC(ucc_status_t, ucc_tl_mlx5_alltoall_init,
                 block_size, msg_size);
     }
 
-    task->alltoall.block_size = block_size;
 
     // TODO remove for connectX-7 - this is mkey_entry->stride (count+skip) limitation - only 16 bits
     if (task->alltoall
             .num_of_blocks_columns) { // for other case we will never reach limit - we use bytes skip only for the "leftovers" mode, which means when
                                       // num_of_blocks_columns != 0
+        ucc_assert(0);
         size_t limit =
             (1ULL
              << 16); // TODO We need to query this from device (or device type) and not user hardcoded values
         size_t bytes_count, bytes_count_last, bytes_skip, bytes_skip_last;
         int    ppn = a2a->node.sbgp->group_size;
-        int    bs  = block_size;
 
-        bytes_count_last = (ppn % bs) * msg_size;
-        bytes_skip_last  = (ppn - (ppn % bs)) * msg_size;
-        bytes_count      = bs * msg_size;
-        bytes_skip       = (ppn - bs) * msg_size;
+        bytes_count_last = (ppn % block_size) * msg_size;
+        bytes_skip_last  = (ppn - (ppn % block_size)) * msg_size;
+        bytes_count      = block_size * msg_size;
+        bytes_skip       = (ppn - block_size) * msg_size;
         if ((bytes_count + bytes_skip >= limit) ||
             (bytes_count_last + bytes_skip_last >= limit)) {
             tl_error(UCC_TL_TEAM_LIB(tl_team),

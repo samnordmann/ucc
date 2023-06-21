@@ -528,6 +528,9 @@ void init_buffer(void *buf, size_t count, ucc_datatype_t dt,
 ucc_status_t compare_buffers(void *rst, void *expected, size_t count,
                              ucc_datatype_t dt, ucc_memory_type_t mt);
 
+ucc_status_t compare_buffers_rank(void *rst, void *expected, size_t count,
+                             ucc_datatype_t dt, ucc_memory_type_t mt, int rank);
+
 ucc_status_t divide_buffer(void *expected, size_t divider, size_t count,
                            ucc_datatype_t dt);
 

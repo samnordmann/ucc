@@ -20,7 +20,7 @@ void init_buffer_host(void *buf, size_t count, int _value)
 {
     T *ptr = (T *)buf;
     for (size_t i = 0; i < count; i++) {
-        ptr[i] = (T)((_value + i + 1) % 128);
+        ptr[i] = (T)((i) % 128);
     }
 }
 
@@ -180,13 +180,92 @@ ucc_status_t compare_buffers(void *_rst, void *expected, size_t count,
     } else {
         status = memcmp(rst, expected, count*ucc_dt_size(dt)) ?
             UCC_ERR_NO_MESSAGE : UCC_OK;
-        // uint8_t* a = (uint8_t*)rst;
-        // uint8_t* b = (uint8_t*)expected;
-        // for (int i=0; i<count*ucc_dt_size(dt); i++ ){
-        //     if (a[i] != b[i]) {
-        //         printf("!?!?!?!?!? FAILUUUUUURE at i=%d, a=%hhn, b=%hhn, range=%ld\n", i, a, b, count*ucc_dt_size(dt));
-        //     }
-        // }
+        uint8_t* a = (uint8_t*)rst;
+        uint8_t* b = (uint8_t*)expected;
+        for (int i=0; i<count*ucc_dt_size(dt); i++ ){
+            if (a[i] != b[i]) {
+                printf("!?!?!?!?!? FAILUUUUUURE at i=%d, a=%hhn, b=%hhn, range=%ld\n", i, a, b, count*ucc_dt_size(dt));
+                break;
+            }
+        }
+    }
+
+    if (UCC_MEMORY_TYPE_HOST != mt) {
+        UCC_CHECK(ucc_mc_free(rst_mc_header));
+    }
+
+    return status;
+}
+
+ucc_status_t compare_buffers_rank(void *_rst, void *expected, size_t count,
+                             ucc_datatype_t dt, ucc_memory_type_t mt, int rank)
+{
+    ucc_status_t status = UCC_ERR_NO_MESSAGE;
+    ucc_mc_buffer_header_t *rst_mc_header;
+    void *rst = NULL;
+
+    if (UCC_MEMORY_TYPE_HOST == mt) {
+        rst = _rst;
+    } else if (UCC_MEMORY_TYPE_CUDA == mt || UCC_MEMORY_TYPE_ROCM == mt) {
+        UCC_ALLOC_COPY_BUF(rst_mc_header, UCC_MEMORY_TYPE_HOST, _rst, mt,
+                           count * ucc_dt_size(dt));
+        rst = rst_mc_header->addr;
+    } else {
+        std::cerr << "Unsupported mt\n";
+        MPI_Abort(MPI_COMM_WORLD, -1);
+    }
+
+    if (dt == UCC_DT_FLOAT32) {
+        status = compare_buffers_fp<float>((float*)rst, (float*)expected, count);
+    } else if (dt == UCC_DT_FLOAT64) {
+        status = compare_buffers_fp<double>((double*)rst, (double*)expected,
+                                            count);
+    } else if (dt == UCC_DT_FLOAT128) {
+        status = compare_buffers_fp<long double>(
+            (long double *)rst, (long double *)expected, count);
+    } else if (dt == UCC_DT_FLOAT32_COMPLEX) {
+        status = compare_buffers_complex<float _Complex>(
+            (float _Complex *)rst, (float _Complex *)expected, count);
+    } else if (dt == UCC_DT_FLOAT64_COMPLEX) {
+        status = compare_buffers_complex<double _Complex>(
+            (double _Complex *)rst, (double _Complex *)expected, count);
+    } else if (dt == UCC_DT_FLOAT128_COMPLEX) {
+        status = compare_buffers_complex<long double _Complex>(
+            (long double _Complex *)rst, (long double _Complex *)expected,
+            count);
+    } else {
+        int i;
+        status = memcmp(rst, expected, count*ucc_dt_size(dt)) ?
+            UCC_ERR_NO_MESSAGE : UCC_OK;
+        uint8_t* a = (uint8_t*)rst;
+        uint8_t* b = (uint8_t*)expected;
+        if (rank==0) {
+            sleep(1);
+            printf("\nobtained:\n");
+            for (i=0; i<count*ucc_dt_size(dt); i++ ){
+                if (a[i] != b[i]) {
+                    printf("!");
+                }
+                printf("%d ", a[i]);
+            }
+            printf("\nexpected:\n");
+            for (i=0; i<count*ucc_dt_size(dt); i++ ){
+                if (a[i] != b[i]) {
+                    printf("!");
+                }
+                printf("%d ",b[i]);
+            }
+            printf("\n");
+        }
+        for (i=0; i<count*ucc_dt_size(dt); i++ ){
+            if (a[i] != b[i]) {
+                printf("!?!?!?!?!? FAILUUUUUURE for rank=%d at i=%d, a=%hhn, b=%hhn, range=%ld\n", rank, i, a, b, count*ucc_dt_size(dt));
+                break;
+            }
+        }
+        if (i == count*ucc_dt_size(dt)) {
+            printf("!!!!!!!!!! SUCCESSS !! at rank=%d\n", rank);
+        }
     }
 
     if (UCC_MEMORY_TYPE_HOST != mt) {
