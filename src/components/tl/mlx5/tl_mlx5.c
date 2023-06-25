@@ -32,6 +32,12 @@ static ucc_config_field_t ucc_tl_mlx5_lib_config_table[] = {
     "divide ppn. Requires BLOCK_SIZE=0",
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, force_regular), UCC_CONFIG_TYPE_BOOL},
 
+    {"FORCE_LONGER", "n", "Force the blocks to have more height than width",
+     ucc_offsetof(ucc_tl_mlx5_lib_config_t, force_longer), UCC_CONFIG_TYPE_BOOL},
+
+    {"FORCE_WIDER", "n", "Force the blocks to have more width than height",
+     ucc_offsetof(ucc_tl_mlx5_lib_config_t, force_wider), UCC_CONFIG_TYPE_BOOL},
+
     {"BLOCK_SIZE", "0",
      "Size of the blocks that are sent using blocked AlltoAll Algorithm",
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, block_size), UCC_CONFIG_TYPE_UINT},

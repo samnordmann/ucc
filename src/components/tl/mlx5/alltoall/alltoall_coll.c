@@ -424,7 +424,6 @@ ucc_tl_mlx5_dm_chunk_t* ucc_tl_mlx5_a2a_wait_for_dm_chunk (ucc_tl_mlx5_schedule_
 // add polling mechanism for blocks in order to maintain const qp tx rx
 static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
 {
-    // printf("ucc_tl_mlx5_send_blocks_start\n");
     ucc_tl_mlx5_schedule_t *task      = TASK_SCHEDULE(coll_task);
     ucc_base_lib_t *        lib = UCC_TASK_LIB(task);
     ucc_tl_mlx5_team_t *    team      = TASK_TEAM(task);
@@ -443,8 +442,8 @@ static ucc_status_t ucc_tl_mlx5_send_blocks_start(ucc_coll_task_t *coll_task)
     int                     node_grid_w = node_size / block_w;
     int node_nbr_blocks = (node_size * node_size) / (block_h * block_w);
     int                     seq_index = task->alltoall.seq_index;
-    int                     node_idx, block_row, block_col, block_idx, rank, dest_rank, cyc_rank;
-    uint64_t                src_addr, remote_addr;
+    int                     node_idx, block_row = 0, block_col = 0, block_idx, rank, dest_rank, cyc_rank;
+    uint64_t                src_addr, remote_addr = 0;
     ucc_tl_mlx5_dm_chunk_t *dm = NULL;
     int i,j, k, send_to_self;
     int batch_size = UCC_TL_MLX5_TEAM_LIB(team)->cfg.block_batch_size;
@@ -828,35 +827,25 @@ static inline int block_size_fits(size_t msgsize, int height, int width)
     return tsize <= MAX_TRANSPOSE_SIZE && msgsize <= 128 && height <= 64 && width <= 64;
 }
 
-static inline int get_square_block_dimension(ucc_tl_mlx5_schedule_t *task)
+static inline void get_block_dimensions(int ppn, int msgsize, int force_regular, int force_longer, int force_wider, int* block_height, int* block_width)
 {
-    ucc_tl_mlx5_team_t *team = TASK_TEAM(task);
-    int                 ppn  = team->a2a->node.sbgp->group_size;
-    int                 block_size;
-
-    block_size = ppn;
-    while (!block_size_fits(task->alltoall.msg_size, block_size, block_size)) {
-        block_size--;
-    }
-    return block_size;
-}
-
-static inline void get_regular_rectangular_block_dimensions(ucc_tl_mlx5_schedule_t *task, int* block_height, int* block_width)
-{
-    int                 ppn  = TASK_TEAM(task)->a2a->node.sbgp->group_size;
-    int                 h,w, h_best=1, w_best=1;
+    int h_best = 1;
+    int w_best = 1;
+    int h,w;
 
     for (h = 1; h <= 64; h++) {
-        if (ppn % h) {
+        if (force_regular && (ppn % h)) {
             continue;
         }
-        for (w = h; w <= 64; w++) {
-            if (ppn % w){
+        for (w = 1; w <= 64; w++) {
+            if ((force_regular && (ppn % w))
+                || (force_wider && (w < h))
+                || (force_longer && (w > h))) {
                 continue;
             }
-            if (block_size_fits(task->alltoall.msg_size, h, w)
+            if (block_size_fits(msgsize, h, w)
                 && h*w >= h_best*w_best) {
-                if ( h*w > h_best*w_best || h/w < h_best/w_best) {
+                if ( h*w > h_best*w_best || abs(h/w-1) < abs(h_best/w_best-1)) {
                     h_best = h;
                     w_best = w;
                 }
@@ -878,6 +867,8 @@ UCC_TL_MLX5_PROFILE_FUNC(ucc_status_t, ucc_tl_mlx5_alltoall_init,
     ucc_tl_mlx5_a2a_t * a2a     = tl_team->a2a;
     int             is_asr = (a2a->node.sbgp->group_rank == a2a->node.asr_rank);
     int             i, n_tasks = is_asr ? 4 : 2, curr_task = 0;
+    int ppn = tl_team->a2a->node.sbgp->group_size;
+    ucc_tl_mlx5_lib_config_t* cfg = &UCC_TL_MLX5_TEAM_LIB(tl_team)->cfg;
     ucc_schedule_t *schedule;
     ucc_tl_mlx5_schedule_t *task;
     size_t                  msg_size;
@@ -919,15 +910,30 @@ UCC_TL_MLX5_PROFILE_FUNC(ucc_status_t, ucc_tl_mlx5_alltoall_init,
     tl_debug(UCC_TL_TEAM_LIB(tl_team), "Seq num is %d", task->alltoall.seq_num);
     a2a->sequence_number += 1;
 
-    if (UCC_TL_MLX5_TEAM_LIB(tl_team)->cfg.force_regular) {
-        get_regular_rectangular_block_dimensions(task, &task->alltoall.block_height, &task->alltoall.block_width);
-        ucc_assert(!(a2a->node.sbgp->group_size % task->alltoall.block_height));
-        ucc_assert(!(a2a->node.sbgp->group_size % task->alltoall.block_width));
-        ucc_assert(!a2a->requested_block_size);
+    if (a2a->requested_block_size) {
+        task->alltoall.block_height = task->alltoall.block_width = a2a->requested_block_size;
+        if (cfg->force_regular
+                && ((ppn % task->alltoall.block_height)
+                    || (ppn % task->alltoall.block_width))){
+            tl_debug(UCC_TL_TEAM_LIB(tl_team), "the requested block size implies irregular case"
+            "consider changing the block size or turn off the config FORCE_REGULAR");
+            return UCC_ERR_INVALID_PARAM;
+        }
     } else {
-        task->alltoall.block_height = task->alltoall.block_width = a2a->requested_block_size ? a2a->requested_block_size
-                                            : get_square_block_dimension(task);
+        if (!cfg->force_regular) {
+            if (!(cfg->force_longer && cfg->force_wider)) {
+                tl_debug(UCC_TL_TEAM_LIB(tl_team), "turning off FORCE_REGULAR automatically forces the blocks to be square");
+                cfg->force_longer = 1;
+                cfg->force_wider = 1;
+            }
+        }
+        get_block_dimensions(ppn, task->alltoall.msg_size,
+                             cfg->force_regular,
+                             cfg->force_longer,
+                             cfg->force_wider,
+                             &task->alltoall.block_height, &task->alltoall.block_width);
     }
+    tl_debug(UCC_TL_TEAM_LIB(tl_team), "block dimensions: [%d,%d]", task->alltoall.block_height, task->alltoall.block_width);
 
     //todo following section correct assuming homogenous PPN across all nodes
     task->alltoall.num_of_blocks_columns =
@@ -948,7 +954,7 @@ UCC_TL_MLX5_PROFILE_FUNC(ucc_status_t, ucc_tl_mlx5_alltoall_init,
         size_t limit =
             (1ULL
              << 16); // TODO We need to query this from device (or device type) and not user hardcoded values
-        int    ppn = a2a->node.sbgp->group_size;
+        ucc_assert(task->alltoall.block_height == task->alltoall.block_width);
         int    block_size = task->alltoall.block_height;
         size_t bytes_count, bytes_count_last, bytes_skip, bytes_skip_last;
 
