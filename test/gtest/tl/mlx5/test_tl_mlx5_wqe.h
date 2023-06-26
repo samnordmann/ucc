@@ -178,7 +178,6 @@ class test_tl_mlx5_dm : public test_tl_mlx5_rdma_write {
         dm_attr.length = bufsize;
         dm_ptr         = ibv_alloc_dm(ctx, &dm_attr);
         ASSERT_TRUE(dm_ptr != NULL);
-        ASSERT_TRUE(errno != 0);
 
         dm_mr = ibv_reg_dm_mr(pd, dm_ptr, 0, dm_attr.length,
                               IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE |
