@@ -32,7 +32,7 @@ static ucc_config_field_t ucc_tl_mlx5_lib_config_table[] = {
     "divide ppn. Requires BLOCK_SIZE=0",
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, force_regular), UCC_CONFIG_TYPE_BOOL},
 
-    {"FORCE_LONGER", "n", "Force the blocks to have more height than width",
+    {"FORCE_LONGER", "y", "Force the blocks to have more height than width",
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, force_longer), UCC_CONFIG_TYPE_BOOL},
 
     {"FORCE_WIDER", "n", "Force the blocks to have more width than height",
