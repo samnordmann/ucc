@@ -238,9 +238,6 @@ ucc_status_t ucc_tl_mlx5_share_ctx_pd(ucc_tl_mlx5_context_t *ctx,
         ctx->shared_pd = ibv_import_pd(ctx->shared_ctx, pd_handle);
         if (!ctx->shared_pd) {
             tl_error(lib, "import PD failed");
-            if (ibv_close_device(ctx->shared_ctx)) {
-                tl_error(lib, "imported context close failed");
-            }
             return UCC_ERR_NO_MESSAGE;
         }
     } else {

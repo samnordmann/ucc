@@ -123,16 +123,21 @@ ucc_status_t ucc_tl_mlx5_ib_ctx_pd_init(ucc_tl_mlx5_context_t *ctx)
     }
     tl_debug(ctx->super.super.lib, "using %s:%d", ib_devname, port);
 
+    // you can comment the whole block for experimenting. 
     ctx->shared_pd = ibv_alloc_pd(ctx->shared_ctx);
     if (!ctx->shared_pd) {
         tl_error(ctx->super.super.lib, "failed to allocate ib_pd");
         goto destroy_context;
     }
 
+    // uncomment if needed for experimenting. If returning error, the bug appears only when calling ibv_alloc_pd above
+    // return UCC_ERR_NO_RESOURCE; 
+
     return UCC_OK;
 
 destroy_context:
     ibv_close_device(ctx->shared_ctx);
+    ctx->shared_ctx = NULL;
 
     return UCC_ERR_NO_RESOURCE;
 }
@@ -201,13 +206,14 @@ ucc_status_t ucc_tl_mlx5_context_create_epilog(ucc_base_context_t *context)
         if (mkdtemp(sock_path) != NULL) {
             status = ucc_tl_mlx5_ib_ctx_pd_init(ctx);
             if (status != UCC_OK) {
-                goto err;
+                goto err_ib_ctx_pd_init;
             }
 
             strncat(sock_path, sockname, sizeof(sock_path) - strlen(sock_path) - 1);
             status = ucc_tl_mlx5_socket_init(ctx, sbgp->group_size, &sock,
                                              sock_path);
             if (UCC_OK != status) {
+err_ib_ctx_pd_init:
                 sock_path[0] = '\0';
                 tl_error(context->lib, "failed to init socket to share ib_ctx");
             }
@@ -218,6 +224,8 @@ ucc_status_t ucc_tl_mlx5_context_create_epilog(ucc_base_context_t *context)
         sbcast_data->ib_port = ctx->ib_port;
         memcpy(sbcast_data->sock_path, sock_path, sizeof(sock_path));
     }
+    // uncomment if needed for experimenting
+    // return UCC_ERR_NO_MESSAGE;
     steam = core_ctx->service_team;
 
     s.map    = sbgp->map;
@@ -271,9 +279,11 @@ ucc_status_t ucc_tl_mlx5_context_create_epilog(ucc_base_context_t *context)
     return UCC_OK;
 
 err:
-    ucc_tl_mlx5_remove_shared_ctx_pd(ctx);
+    // ucc_tl_mlx5_remove_shared_ctx_pd(ctx);
     ucc_topo_cleanup(topo);
-    close(sock);
+    if (sock){
+        close(sock);
+    }
 err_topo:
     ucc_free(sbcast_data);
     return status;
