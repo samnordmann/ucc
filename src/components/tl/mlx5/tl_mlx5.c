@@ -117,27 +117,24 @@ static ucc_config_field_t ucc_tl_mlx5_lib_config_table[] = {
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, mcast_conf.one_sided_reliability_enable),
      UCC_CONFIG_TYPE_BOOL},
 
-<<<<<<< HEAD
-=======
-    {"SEND_BATCH_SIZE", "1",
+    {"SEND_BATCH_SIZE", "2",
      "number of blocks that are transposed "
      "on the NIC before being sent as a batch to a remote peer",
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, block_batch_size),
      UCC_CONFIG_TYPE_UINT},
 
-    {"NBR_SERIALIZED_BATCHES", "1",
+    {"NBR_SERIALIZED_BATCHES", "4",
      "number of block batches "
      "(within the set of blocks to be sent to a given remote peer) "
      "serialized on the same device memory chunk",
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, nbr_serialized_batches),
      UCC_CONFIG_TYPE_UINT},
 
-    {"NBR_BATCHES_PER_PASSAGE", "32",
+    {"NBR_BATCHES_PER_PASSAGE", "1",
      "number of batches of blocks sent to one remote node before enqueing",
      ucc_offsetof(ucc_tl_mlx5_lib_config_t, nbr_batches_per_passage),
      UCC_CONFIG_TYPE_UINT},
 
->>>>>>> b5b79854... TL/MLX5: various optimizations
     {NULL}};
 
 static ucc_config_field_t ucc_tl_mlx5_context_config_table[] = {
